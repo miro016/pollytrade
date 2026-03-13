@@ -41,6 +41,21 @@ export class PocketBaseService {
     return this.pb.collection(collection).getOne<T>(id);
   }
 
+  async createRecord<T extends RecordModel>(
+    collection: string,
+    data: Record<string, unknown>,
+  ): Promise<T> {
+    return this.pb.collection(collection).create<T>(data);
+  }
+
+  async updateRecord<T extends RecordModel>(
+    collection: string,
+    id: string,
+    data: Record<string, unknown>,
+  ): Promise<T> {
+    return this.pb.collection(collection).update<T>(id, data);
+  }
+
   subscribe(
     collection: string,
     callback: (data: { action: string; record: RecordModel }) => void,
