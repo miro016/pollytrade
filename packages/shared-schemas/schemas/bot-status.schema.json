@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BotStatus",
+  "type": "object",
+  "required": ["running"],
+  "properties": {
+    "id": { "type": "string" },
+    "running": { "type": "boolean" },
+    "last_heartbeat": { "type": "string", "format": "date-time" },
+    "current_strategy": { "type": "string", "maxLength": 100 },
+    "risk_state": {
+      "type": "string",
+      "enum": ["normal", "caution", "halted"],
+      "description": "Maps to circuit breaker: normal=Closed, caution=Half-Open, halted=Open"
+    },
+    "circuit_breaker_state": {
+      "type": "string",
+      "enum": ["closed", "open", "half_open"]
+    },
+    "active_positions": { "type": "integer", "minimum": 0 },
+    "markets_monitored": { "type": "integer", "minimum": 0 },
+    "last_trade_at": { "type": "string", "format": "date-time" },
+    "last_error": { "type": "string", "maxLength": 2000 },
+    "uptime_seconds": { "type": "number", "minimum": 0 },
+    "created": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string", "format": "date-time" }
+  }
+}

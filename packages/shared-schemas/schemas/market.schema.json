@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Market",
+  "type": "object",
+  "required": ["polymarket_id", "question", "status"],
+  "properties": {
+    "id": { "type": "string" },
+    "polymarket_id": { "type": "string", "description": "Polymarket condition ID" },
+    "question": { "type": "string", "maxLength": 1000 },
+    "current_prices": {
+      "type": "object",
+      "properties": {
+        "yes": { "type": "number", "minimum": 0, "maximum": 1 },
+        "no": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["yes", "no"]
+    },
+    "volume": { "type": "number", "minimum": 0 },
+    "liquidity": { "type": "number", "minimum": 0 },
+    "status": {
+      "type": "string",
+      "enum": ["active", "closed", "resolved"]
+    },
+    "end_date": { "type": "string", "format": "date-time" },
+    "created": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string", "format": "date-time" }
+  }
+}

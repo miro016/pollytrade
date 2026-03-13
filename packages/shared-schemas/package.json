@@ -1,0 +1,12 @@
+{
+  "name": "shared-schemas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JSON schemas and generated types for Polymarket trading bot",
+  "scripts": {
+    "generate": "../scripts/generate-types.sh"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.0"
+  }
+}

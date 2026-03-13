@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Portfolio",
+  "type": "object",
+  "required": ["balance", "mode"],
+  "properties": {
+    "id": { "type": "string" },
+    "balance": { "type": "number" },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["market_id", "token", "quantity", "avg_price"],
+        "properties": {
+          "market_id": { "type": "string" },
+          "token": { "type": "string", "enum": ["yes", "no"] },
+          "quantity": { "type": "number", "minimum": 0 },
+          "avg_price": { "type": "number", "minimum": 0, "maximum": 1 },
+          "current_price": { "type": "number", "minimum": 0, "maximum": 1 },
+          "unrealized_pnl": { "type": "number" }
+        }
+      }
+    },
+    "daily_pnl": { "type": "number" },
+    "total_pnl": { "type": "number" },
+    "win_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "total_trades": { "type": "integer", "minimum": 0 },
+    "mode": { "type": "string", "enum": ["paper", "live"] },
+    "peak_balance": { "type": "number" },
+    "created": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string", "format": "date-time" }
+  }
+}
