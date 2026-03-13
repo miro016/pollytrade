@@ -1,0 +1,268 @@
+# Polymarket trading bot: a complete implementation strategy
+
+**Python is the only viable backend for this bot.** No other language comes close to matching its statistical library ecosystem for z-score, entropy, GARCH volatility, Nash equilibrium, and backtesting — all critical to this system's edge. Combined with an official Polymarket SDK (`py-clob-client`, 834 GitHub stars), [PyPI](https://pypi.org/project/py-clob-client/) adequate WebSocket performance for prediction market data rates, and mature async capabilities, Python handles every requirement without needing a polyglot architecture. The full stack — Angular 21 with DaisyUI for the dashboard, PocketBase as the data layer, and Python as the trading engine — forms a clean three-service architecture deployable via Docker Compose.
+
+---
+
+## 1. Why Python wins the backend comparison decisively
+
+The backend language decision hinges on one fact: **the bot's competitive edge comes from statistical analysis, not execution speed**. Polymarket is a prediction market, not a high-frequency exchange. Message rates are modest (dozens of markets, not thousands of instruments), and latency requirements are measured in seconds, not microseconds.
+
+**Polymarket provides official SDKs for three languages:**
+
+| Language | SDK | GitHub Stars | Last Updated | Statistical Libraries |
+|----------|-----|-------------|-------------|----------------------|
+| **Python** | `py-clob-client` v0.34.6 | 834 ⭐ | Feb 2026 | **10/10** — Complete ecosystem |
+| TypeScript | `@polymarket/clob-client` v5.8.0 | 468 ⭐ | Mar 2026 | 4/10 — No GARCH, no game theory |
+| Rust | `polymarket-client-sdk` v0.3 | 600 ⭐ | Mar 2026 | 3/10 — No GARCH, no backtesting |
+
+Go and Elixir have no official SDKs. Python's statistical ecosystem is **unmatched**: `scipy.stats` for z-scores [SciPy](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.zscore.html) and entropy, [SciPy](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.entropy.html) `arch` v8.0.0 for GARCH volatility modeling, [Medium](https://theaiquant.medium.com/garch-models-for-volatility-forecasting-a-python-based-guide-d48deb5c7d7b) `nashpy` v0.0.43 [PyPI](https://pypi.org/project/nashpy/) for Nash equilibrium computation, `empyrical` for Sharpe/Sortino/drawdown metrics, [Towards Data Science](https://towardsdatascience.com/the-easiest-way-to-evaluate-the-performance-of-trading-strategies-in-python-4959fd798bb3/) and `pandas-ta` for 150+ technical indicators. [Pandas-ta](https://www.pandas-ta.dev/) [Plain English](https://plainenglish.io/blog/best-python-libraries-for-algorithmic-trading) Rust and Go would require implementing years of scientific computing work from scratch.
+
+WebSocket performance is the one area where Python lags — **~2,500 roundtrips/sec vs ~20,000 for Node.js** [Daniel Lemire's blog](https://lemire.me/blog/2023/11/28/a-simple-websocket-benchmark-in-python/) — but this is irrelevant for a prediction market bot monitoring dozens of markets. Using `uvloop` provides a 1.8× speedup, and `asyncio` with `ProcessPoolExecutor` handles CPU-bound statistical computations without blocking I/O. A hybrid Python+Rust architecture is overkill for v1; start pure Python and profile later.
+
+**Recommended Python stack:**
+- **API client**: `py-clob-client` (official Polymarket SDK)
+- **WebSocket**: `websockets` v14+ with `uvloop`
+- **HTTP framework**: FastAPI (health endpoints, internal API)
+- **Statistics**: numpy, scipy, pandas, statsmodels, arch, nashpy
+- **Technical analysis**: `pandas-ta` (pure Python, easy Docker deployment)
+- **Performance metrics**: `empyrical-reloaded`
+- **Async runtime**: asyncio + uvloop
+- **PocketBase client**: `pocketbase-async` or direct httpx
+
+---
+
+## 2. The Python statistical pipeline from data to decisions
+
+These libraries form a layered pipeline where each stage feeds the next. Data flows from pandas DataFrames through statistical analysis, signal generation, risk assessment, and finally position sizing.
+
+**scipy.stats** provides the foundation with `zscore()` for detecting anomalous price movements [SciPy](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.zscore.html) and `entropy()` for measuring market uncertainty. [SciPy](https://docs.scipy.org/doc/scipy-1.12.0/reference/generated/scipy.stats.entropy.html) In prediction markets, entropy is particularly meaningful: a market at 50/50 has maximum entropy (**~1.0 bit**), [SciPy](https://docs.scipy.org/doc/scipy-1.11.4/reference/generated/scipy.stats.entropy.html) while 95/5 has low entropy (~0.29 bits), signaling consensus. **statsmodels** extends this with the Augmented Dickey-Fuller test for stationarity — if a prediction market price is stationary, mean-reversion strategies become viable.
+
+**arch** v8.0.0 (by Kevin Sheppard) provides GARCH(p,q) volatility modeling [Medium](https://theaiquant.medium.com/mastering-volatility-forecasting-a-step-by-step-guide-to-building-a-powerful-garch-model-in-python-4aa4c03ec609) with multiple distributions (Normal, Student's t, Skewed t), volatility forecasting via analytic, simulation, and bootstrap methods, and Value-at-Risk computation. [Arch Wiki](https://arch.readthedocs.io/en/latest/univariate/univariate_volatility_forecasting.html) For prediction markets, GARCH forecasts drive dynamic position sizing: smaller positions when volatility is high, larger when it's low.
+
+**nashpy** v0.0.43 models market participant dynamics as 2-player games. The support enumeration algorithm computes Nash equilibria [Medium](https://agbonorino.medium.com/nashpy-strategic-interactions-in-python-aac937c916a5) for scenarios like "bot vs. market maker" with strategies [aggressive, passive] × [tight spread, wide spread]. This informs optimal order aggressiveness based on game-theoretic equilibrium.
+
+**scikit-learn** generates ML-based signals using `TimeSeriesSplit` (not random K-fold — critical for temporal data). Random forests or gradient boosting classifiers predict next-period price direction from features including RSI, MACD, z-scores, and volatility estimates.
+
+```python
+# Integrated pipeline example
+from scipy.stats import zscore, entropy
+from arch import arch_model
+import nashpy as nash
+import empyrical as ep
+
+# Statistical analysis
+z_scores = zscore(df['price'].dropna())
+market_uncertainty = entropy([price, 1 - price], base=2)
+
+# Volatility forecasting  
+am = arch_model(returns * 100, vol='Garch', p=1, q=1, dist='t')
+vol_forecast = np.sqrt(am.fit(disp='off').forecast(horizon=1).variance.iloc[-1].values[0])
+
+# Game theory for order sizing
+game = nash.Game(bot_payoffs, maker_payoffs)
+optimal_strategy = list(game.support_enumeration())[0]
+
+# Performance tracking
+sharpe = ep.sharpe_ratio(returns)
+max_dd = ep.max_drawdown(returns)
+```
+
+For technical analysis, **pandas-ta** is recommended over TA-Lib for easier Docker deployment (pure Python [Plain English](https://plainenglish.io/blog/best-python-libraries-for-algorithmic-trading) with Numba JIT vs. C library compilation). Both provide 150+ indicators [QuantInsti](https://blog.quantinsti.com/install-ta-lib-python/) [Plain English](https://plainenglish.io/blog/best-python-libraries-for-algorithmic-trading) with highly correlated results. [Pandas-ta](https://www.pandas-ta.dev/) pandas-ta's native DataFrame integration via the `.ta` extension is more Pythonic.
+
+---
+
+## 3. Async WebSocket architecture for Polymarket streams
+
+Polymarket exposes **four WebSocket channels**: market data (`wss://ws-subscriptions-clob.polymarket.com/ws/market`), user events (authenticated), sports, and RTDS (real-time data streaming). [Polymarket](https://docs.polymarket.com/market-data/websocket/overview) [polymarket](https://docs.polymarket.com/market-data/websocket/overview) The market channel streams `book`, `price_change`, `last_trade_price`, and `best_bid_ask` events. [polymarket](https://docs.polymarket.com/market-data/websocket/overview) **A PING must be sent every 10 seconds**; [polymarket](https://docs.polymarket.com/market-data/websocket/overview) the server responds with PONG.
+
+The `websockets` library v14+ handles this cleanly with its `async for websocket in websockets.connect()` pattern, which provides automatic reconnection with exponential backoff: [CopyProgramming](https://copyprogramming.com/howto/python-python-websocket-client-subscribe-code-example)
+
+```python
+async def polymarket_stream(asset_ids: list[str]):
+    uri = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    async for ws in websockets.connect(uri, ping_interval=10, ping_timeout=20):
+        try:
+            await ws.send(json.dumps({
+                "assets_ids": asset_ids, "type": "market"
+            }))
+            async for message in ws:
+                if message != "PONG":
+                    await queue.put(json.loads(message))
+        except websockets.ConnectionClosed:
+            continue  # auto-reconnects
+```
+
+The producer-consumer pattern using `asyncio.Queue` decouples data ingestion from strategy processing. Multiple WebSocket streams (one per market group) feed a shared queue, while a single consumer coroutine processes signals sequentially. This prevents strategy logic from blocking data reception. **Rate limits cap at 500 instruments per WebSocket connection** (Cloudflare-enforced); for larger instrument sets, distribute across multiple connections. [NautilusTrader](https://nautilustrader.io/docs/latest/integrations/polymarket/)
+
+A notable discovery: **pmxt** (`pip install pmxt`) brands itself as "the ccxt for prediction markets," providing a unified API for Polymarket, Kalshi, Limitless, and Manifold. [Medium](https://medium.com/@samuel.tinnerholm/stop-using-frameworks-why-pmxt-beats-dr-manhattan-and-predmarket-539223cfa086) This could simplify multi-platform support. **NautilusTrader** also offers a production-grade Polymarket adapter with automatic WebSocket distribution across connections. [NautilusTrader](https://nautilustrader.io/docs/latest/integrations/polymarket/)
+
+---
+
+## 4. Angular 21 real-time dashboard with signals and DaisyUI
+
+Angular 21 is **zoneless by default** with signals as the primary state management primitive. [Medium](https://medium.com/@ramsatt/angular-21-the-ultimate-guide-to-building-real-time-datatables-with-signals-web-apis-1c217564e1b9) [medium](https://medium.com/@ramsatt/angular-21-the-ultimate-guide-to-building-real-time-datatables-with-signals-web-apis-1c217564e1b9) This eliminates zone.js overhead and makes real-time trading dashboards significantly more performant.
+
+**Signals replace ~50% of RxJS usage.** [Medium](https://medium.com/@piyalidas.it/angular-signals-that-will-replace-half-your-rxjs-code-in-2025-aeca15205103) Market prices, portfolio state, and derived metrics like P&L use writable and computed signals. RxJS remains essential for WebSocket/SSE streams, bridged via `toSignal()`:
+
+```typescript
+readonly marketPrices = signal<Record<string, number>>({});
+readonly portfolioValue = computed(() => 
+  this.portfolio().reduce((total, pos) => 
+    total + pos.quantity * (this.marketPrices()[pos.marketId] ?? 0), 0));
+readonly pnl = computed(() => /* derived from positions + prices */);
+
+// Side effects for alerts
+effect(() => {
+  if (this.pnlPercent() < -3) this.playSound('loss-warning.mp3');
+});
+```
+
+**httpResource()** (introduced in Angular 19.2) wraps HttpClient into a reactive signal-based API. It auto-triggers requests when dependent signals change and auto-cancels stale requests [angular +2](https://angular.dev/guide/http/http-resource) — ideal for PocketBase queries that depend on search filters or pagination signals. It only handles GET requests; mutations still use HttpClient directly. [angular](https://angular.dev/guide/http/http-resource) [Angular](https://angular.dev/guide/http/http-resource)
+
+**PocketBase SSE subscriptions** use the official JS SDK (`npm install pocketbase`), which manages SSE lifecycle automatically including reconnection. The pattern `pb.collection('trades').subscribe('*', callback)` fires on create/update/delete events, feeding directly into Angular signals.
+
+For charting, a **hybrid approach** works best:
+
+- **lightweight-charts** (TradingView, ~40KB) [GitHub](https://github.com/tradingview/lightweight-charts) → Primary price charts, candlesticks, real-time `.update()` API. [TradingView](https://tradingview.github.io/lightweight-charts/docs) Angular wrapper: `ngx-lightweight-charts` [GitHub](https://github.com/jamesbrobb/ngx-lightweight-charts)
+- **ng2-charts** (Chart.js) → P&L bar charts, portfolio allocation pie/doughnut charts [NgDevelop](https://www.ngdevelop.tech/best-angular-chart-libraries/)
+- **ngx-echarts** (Apache ECharts) → Heatmaps, gauges, complex multi-dimensional analysis [Angular Minds](https://www.angularminds.com/blog/charting-libraries-for-angular)
+
+**DaisyUI 5 with Tailwind v4** installs via `npm install daisyui@latest tailwindcss@latest @tailwindcss/postcss@latest postcss@latest`. [Daisyui](https://v5.daisyui.com/docs/install/angular/) Critical note: the `.postcssrc.json` must include `{"optimize": {"minify": true}}` — without this, Angular builds produce invalid CSS. [Medium](https://medium.com/@paer.linder/angular-20-tailwind-4-daisyui-5-ed85b1966a17)
+
+---
+
+## 5. PocketBase as the real-time data bridge
+
+PocketBase serves as the **communication layer** between the Python trading engine and the Angular dashboard. The Python engine writes trades, signals, portfolio snapshots, and bot status; Angular reads and subscribes to real-time changes via SSE.
+
+**Python integration** uses the community async SDK (`pip install pocketbase-async`) or direct httpx calls to PocketBase's REST API. The REST endpoints follow a clean pattern: `GET/POST /api/collections/{name}/records` with filter syntax like `status = true && created > "2024-01-01"`. For full control, a thin httpx wrapper is recommended over the community SDK. [GitHub](https://github.com/vaphes/pocketbase)
+
+**Collection schema design** for the trading system:
+
+| Collection | Key Fields | Purpose |
+|-----------|-----------|---------|
+| **markets** | polymarket_id, question, current_prices (JSON), volume, status | Market metadata cache |
+| **trades** | market_id (relation), side, amount, price, strategy, mode (paper/live), pnl | Trade history |
+| **signals** | market_id (relation), signal_type, direction, value, confidence, metadata (JSON) | Signal log |
+| **portfolio** | balance, positions (JSON), daily_pnl, total_pnl, win_rate, mode | Portfolio snapshots |
+| **strategy_configs** | name, parameters (JSON), active, mode | Strategy configuration |
+| **bot_status** | running, last_heartbeat, current_strategy, risk_state, last_error | Engine health |
+
+The Angular frontend subscribes to collections via `pb.collection('trades').subscribe('*', callback)`. **Access control matters**: `ListRule` governs collection-wide subscriptions, `ViewRule` governs single-record subscriptions. [pocketbase](https://pocketbase.io/docs/api-realtime/) [PocketBase](https://pocketbase.io/docs/api-realtime/) The PocketBase health endpoint at `GET /api/health` returns `{"code":200,"message":"API is healthy."}` — used for Docker health checks.
+
+For the Nginx reverse proxy (serving Angular), SSE requires specific headers: `proxy_set_header Connection ''`, `proxy_http_version 1.1`, `proxy_buffering off`, and `proxy_cache off`. Without these, SSE connections silently fail.
+
+---
+
+## 6. Paper trading and backtesting for prediction markets
+
+The abstract adapter pattern ensures **identical strategy code runs against paper and live trading**. A Python ABC defines the interface [Refactoring.Guru](https://refactoring.guru/design-patterns/adapter/python/example) (`place_order`, `cancel_order`, `get_position`, `get_balance`), with `PaperTradingAdapter` simulating fills with configurable slippage (typically 1–10 bps) and fee deduction, while `LivePolymarketAdapter` calls the real CLOB API:
+
+```python
+class TradingAdapter(ABC):
+    @abstractmethod
+    def place_order(self, order: Order) -> OrderResult: ...
+    @abstractmethod
+    def get_balance(self) -> float: ...
+
+# Strategy code is identical:
+def run_strategy(adapter: TradingAdapter):
+    price = adapter.get_market_price("market-id")
+    if price < threshold:
+        adapter.place_order(Order("market-id", OrderSide.BUY, amount))
+```
+
+**Traditional backtesting frameworks poorly fit prediction markets.** Binary outcomes, finite market lifespans, complementary token pricing (Yes + No = $1), and resolution events [PyPI](https://pypi.org/project/polymarket-apis/) differ fundamentally from OHLCV trading. Two purpose-built frameworks exist: **`prediction-market-backtesting`** (evan-kolberg, Rust core + Python callbacks, NautilusTrader-inspired, [GitHub](https://github.com/evan-kolberg/prediction-market-backtesting) ~53 GB historical dataset) [GitHub](https://github.com/evan-kolberg/prediction-market-backtesting) and **`polymarket-trading-bot`** (clawdvandamme, 4 built-in strategies including mean reversion and momentum). [GitHub](https://github.com/clawdvandamme/polymarket-trading-bot) For historical data, `poly_data` provides [GitHub](https://github.com/warproxxx/poly_data) **~36 GB of compressed historical Polymarket trade data**, and the official API offers `/prices-history` endpoint [Polymarket](https://docs.polymarket.com/developers/CLOB/timeseries) with 2-minute fidelity.
+
+**Walk-forward analysis** is the gold standard for validation. [dev](https://dev.to/maymay5692/i-built-a-crypto-trading-bot-in-python-heres-the-whole-thing-4j6p) [Wikipedia](https://en.wikipedia.org/wiki/Walk_forward_optimization) The pattern: optimize strategy parameters on a training window (e.g., 252 days), test on the next window (126 days), slide forward, repeat. Only out-of-sample results are concatenated for final evaluation. [dev](https://dev.to/maymay5692/i-built-a-crypto-trading-bot-in-python-heres-the-whole-thing-4j6p) [QuantInsti](https://blog.quantinsti.com/walk-forward-optimization-introduction/) `PyBroker` [Medium](https://medium.com/@edtechre/algotrading-in-python-with-machine-learning-walkforward-analysis-1ebfb8a9fcf0) and `backtesting.py` both support this natively; [Backtesting.py](https://kernc.github.io/backtesting.py/doc/examples/Trading%20with%20Machine%20Learning.html) custom implementation with scikit-learn's `TimeSeriesSplit` is straightforward.
+
+---
+
+## 7. Visual strategy builder with JSON-driven forms
+
+**ngx-formly** is the recommended library for dynamic form generation in Angular. It renders forms from JSON configuration, [Formly](https://formly.dev/) supports conditional visibility (`expressions: { hide: '!model.rsi.enabled' }`), and integrates with Angular Reactive Forms. [Medium](https://medium.com/@sandakova.varvara/how-to-use-ngx-formly-in-angular-8d2eea190271)
+
+The strategy builder architecture uses **three layers**: a JSON schema defining available indicators and their parameters, custom DaisyUI field types (toggle, slider, number input), and preset templates that auto-populate configurations. Each indicator card shows a toggle switch to enable/disable, parameter controls that appear conditionally, and a weight slider for multi-signal combination.
+
+Real-world strategy builders (3Commas, Vestinda, Composer.trade, Hummingbot) share common patterns: **preset templates as starting points** (Conservative, Aggressive, Custom), embedded TradingView charts alongside configuration forms, slider controls for numeric parameters, and live backtesting preview. The most effective UI pattern combines a card-based layout where each indicator is a collapsible card with enable/disable toggle, parameter inputs, and signal weight.
+
+Strategy configurations serialize to JSON and store in PocketBase's `strategy_configs` collection with **version management** — each save creates a new entry in `strategy_versions` for rollback capability. The Python engine reads the active configuration on startup and watches for real-time updates via PocketBase SSE.
+
+---
+
+## 8. Docker deployment across three services
+
+The Docker Compose configuration runs three services on an internal bridge network:
+
+```yaml
+services:
+  frontend:      # Angular → Nginx, port 80
+  pocketbase:    # PocketBase, port 8090, pb_data volume
+  trading-engine: # Python, depends on pocketbase health
+```
+
+**Critical implementation details**: The Python Dockerfile uses a **multi-stage build** with `python:3.12-slim` (not Alpine — numpy/scipy wheel compilation fails on musl libc). TA-Lib's C library compiles in the build stage and only the shared library copies to the runtime stage, keeping the final image small. [DEV Community](https://dev.to/lazypro/build-a-small-ta-lib-container-image-4ca1) As of TA-Lib 0.6.5+, pre-built binary wheels are available for many platforms, potentially eliminating source compilation. [GitHub](https://github.com/TA-Lib/ta-lib-python)
+
+Health checks use PocketBase's `/api/health` endpoint, a custom `/health` endpoint on the Python engine, and `curl` against Nginx. Restart policy should be `unless-stopped` for all services. On trading engine crash, positions persist in PocketBase; on restart, the engine reads last known state and resumes in paper mode until manual confirmation.
+
+**Inter-service communication** uses Docker DNS: Python connects to PocketBase at `http://pocketbase:8090`, Nginx proxies `/api/` to PocketBase. The Nginx config **must** disable buffering for SSE (`proxy_buffering off; chunked_transfer_encoding off;`).
+
+For **Easypanel deployment**, the Compose (Beta) feature accepts docker-compose.yml directly. Alternatively, create each service as an individual App, with PocketBase mounting `/pb_data` for persistence [Docker Hub](https://hub.docker.com/r/spectado/pocketbase) and Traefik handling SSL via Let's Encrypt.
+
+---
+
+## 9. Risk management: a layered defense system
+
+The risk management system operates as a **gate that every trade proposal must pass through**, combining four independent checks in sequence: daily drawdown limits, circuit breaker state, consecutive loss cooldown, and Kelly position sizing.
+
+**The circuit breaker** uses three states inspired by electrical engineering: **Closed** (normal trading), **Open** (all trading halted), and **Half-Open** (testing with 25% position size). [AI-FutureSchool](https://www.ai-futureschool.com/en/programming/understanding-the-pattern-circuit-breaker.php) It trips on daily loss ≥3%, weekly loss ≥7%, or 5 consecutive losses. After a configurable timeout (default 1 hour), it transitions to Half-Open. Three successful test trades close the breaker; one failure re-opens it.
+
+**Exponential backoff after losses** doubles the cooldown period with each consecutive loss: 2 losses → 60s, 3 → 120s, 4 → 240s, capping at 3,600s. A single win resets the counter to zero.
+
+**Kelly criterion for Polymarket binary outcomes** uses the formula `f* = (bp - q) / b` where `b = (1 - price) / price` represents the net odds. For a YES token at 55¢ where the model estimates 70% true probability: b = 0.818, f* = 33.4%. **Half-Kelly (16.7%) is standard practice** to reduce variance, with a hard cap at 10% of bankroll per position. A minimum edge threshold (2%) prevents trading on noise.
+
+The combined `RiskManagementGate` class evaluates proposals in this order:
+
+1. **Daily/total drawdown** — Has the portfolio lost more than 5% today or 15% from peak?
+2. **Circuit breaker** — Is trading halted or in test mode?
+3. **Loss cooldown** — Is the exponential backoff timer active?
+4. **Kelly sizing** — Does the model show sufficient edge to trade?
+
+Only if all four checks pass does the trade execute, with position size determined by Kelly fraction multiplied by the circuit breaker multiplier (1.0 in Closed, 0.25 in Half-Open).
+
+---
+
+## 10. Monorepo structure with shared schemas
+
+A **simple directory structure with Makefile orchestration** is the right choice for a 3-service, small-team project. Nx with `@nxlv/python` is viable [Better Programming](https://betterprogramming.pub/poetry-python-nx-monorepo-5750d8627024) but adds complexity; Bazel and Pants are overkill.
+
+```
+polymarket-bot/
+├── apps/
+│   ├── frontend/           # Angular 21 + DaisyUI
+│   ├── trading-engine/     # Python trading bot
+│   └── pocketbase/         # Migrations + hooks
+├── packages/
+│   └── shared-schemas/     # JSON Schema → generated types
+│       ├── schemas/        # Source of truth (.schema.json files)
+│       └── generated/      # TypeScript + Python output
+├── docker/                 # docker-compose.yml + .env
+├── scripts/                # setup.sh, generate-types.sh, deploy.sh
+└── Makefile                # Orchestration commands
+```
+
+**JSON Schema serves as the single source of truth** for data types shared between Python and TypeScript. Two code generators maintain type safety:
+
+- `json-schema-to-typescript` → TypeScript interfaces [GitHub](https://github.com/bcherny/json-schema-to-typescript) for Angular
+- `datamodel-code-generator` → Pydantic v2 models for Python [GitHub](https://github.com/koxudaxi/datamodel-code-generator)
+
+A generation script runs both tools against the schema directory, producing type-safe models in both languages from a single definition. This eliminates the drift between frontend and backend types. The schemas also drive PocketBase collection definitions and ngx-formly form configurations, creating a single source that propagates across the entire stack.
+
+**Development workflow**: Run PocketBase in Docker (always needed for its SQLite database), Angular and Python natively for hot-reload during development. Use full Docker Compose for integration testing. `make dev` starts PocketBase, `make dev-all` starts everything, `make generate` regenerates types after schema changes.
+
+---
+
+## Conclusion
+
+This architecture optimizes for **strategy quality over execution speed** — the correct priority for prediction market trading. Python's statistical libraries provide capabilities that would take months to replicate in any other language, while its WebSocket performance (~2,500 roundtrips/sec) handles Polymarket's data rates with headroom to spare. The three-service architecture (Angular dashboard → PocketBase bridge → Python engine) provides clean separation of concerns with real-time data flow via SSE. The risk management system's layered defense — circuit breakers, exponential cooldowns, drawdown limits, and Kelly sizing — prevents catastrophic losses [WunderTrading](https://wundertrading.com/journal/en/learn/article/python-trading-bot) while the abstract adapter pattern enables seamless paper-to-live trading transitions. Starting with a pure Python monolith and only introducing Rust or Node.js if profiling reveals specific bottlenecks is the pragmatic path to a working system.
