@@ -25,12 +25,26 @@ async def lifespan(app: FastAPI):
         pb_url=settings.pb_url,
     )
 
-    # Verify PocketBase connection
-    healthy = await pb_client.health_check()
-    if healthy:
-        logger.info("pocketbase_connected")
-        # Auto-start engine
-        asyncio.create_task(engine.start())
+    # Wait for PocketBase to be fully ready (migrations included)
+    for attempt in range(30):
+        try:
+            healthy = await pb_client.health_check()
+            if healthy:
+                # Verify collections are available (migrations have run)
+                await pb_client.authenticate(
+                    settings.pb_admin_email, settings.pb_admin_password,
+                )
+                await pb_client.list_records("bot_status", per_page=1)
+                logger.info("pocketbase_connected")
+                asyncio.create_task(engine.start())
+                break
+        except Exception as e:
+            logger.info(
+                "waiting_for_pocketbase",
+                attempt=attempt + 1,
+                error=str(e),
+            )
+        await asyncio.sleep(2)
     else:
         logger.warning("pocketbase_unavailable", url=settings.pb_url)
 

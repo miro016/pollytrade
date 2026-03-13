@@ -14,7 +14,7 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
     <!-- Steps indicator -->
     <ul class="steps steps-horizontal w-full mb-8">
       <li class="step" [class.step-primary]="step() >= 1">Wallet Setup</li>
-      <li class="step" [class.step-primary]="step() >= 2">Choose Strategy</li>
+      <li class="step" [class.step-primary]="step() >= 2">Choose Strategies</li>
       <li class="step" [class.step-primary]="step() >= 3">Review & Activate</li>
     </ul>
 
@@ -41,10 +41,10 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
 
         <div class="card bg-base-200">
           <div class="card-body">
-            <h2 class="card-title">Initial Balance</h2>
-            <p class="text-sm opacity-70 mb-4">Set your paper trading starting balance.</p>
+            <h2 class="card-title">Balance Per Strategy</h2>
+            <p class="text-sm opacity-70 mb-4">Each active strategy gets its own independent paper balance.</p>
             <div class="form-control">
-              <label class="label"><span class="label-text">Balance (USD)</span></label>
+              <label class="label"><span class="label-text">Balance per strategy (USD)</span></label>
               <input type="number" class="input input-bordered w-full max-w-xs"
                 min="100" max="1000000" step="100"
                 [ngModel]="walletBalance()" (ngModelChange)="walletBalance.set($event)" />
@@ -88,7 +88,7 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
 
         <div class="flex justify-end">
           <button class="btn btn-primary" (click)="step.set(2)">
-            Next: Choose Strategy
+            Next: Choose Strategies
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
@@ -97,11 +97,11 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
       </div>
     }
 
-    <!-- Step 2: Choose Strategy -->
+    <!-- Step 2: Choose Strategies (multi-select) -->
     @if (step() === 2) {
       <div class="max-w-4xl mx-auto space-y-6">
-        <!-- Category filter -->
-        <div class="flex gap-2 flex-wrap">
+        <!-- Category filter + bulk actions -->
+        <div class="flex gap-2 flex-wrap items-center">
           @for (cat of categories; track cat.value) {
             <button class="btn btn-sm"
               [class.btn-primary]="selectedCategory() === cat.value"
@@ -111,31 +111,38 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
               <span class="badge badge-sm ml-1">{{ getCategoryCount(cat.value) }}</span>
             </button>
           }
+          <div class="divider divider-horizontal mx-1"></div>
+          <button class="btn btn-sm btn-outline btn-success" (click)="selectAllInCategory()">
+            Select All {{ selectedCategory() !== 'all' ? selectedCategory() : '' }}
+          </button>
+          <button class="btn btn-sm btn-outline btn-error" (click)="deselectAllInCategory()">
+            Deselect All
+          </button>
         </div>
 
-        <!-- Category description -->
-        <div class="alert">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span>{{ getCategoryDescription() }}</span>
+        <div class="flex justify-between items-center">
+          <div class="alert py-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{{ getCategoryDescription() }}</span>
+          </div>
+          <span class="badge badge-lg badge-primary ml-4 shrink-0">{{ selectedStrategies().length }} selected</span>
         </div>
 
         <!-- Strategy cards -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           @for (strategy of filteredStrategies(); track strategy.name) {
             <div class="card bg-base-200 cursor-pointer transition-all hover:shadow-lg"
-              [class.ring-2]="selectedStrategy()?.name === strategy.name"
-              [class.ring-primary]="selectedStrategy()?.name === strategy.name"
-              (click)="selectedStrategy.set(strategy)">
+              [class.ring-2]="isSelected(strategy.name)"
+              [class.ring-primary]="isSelected(strategy.name)"
+              (click)="toggleStrategy(strategy)">
               <div class="card-body p-4">
                 <div class="flex items-start justify-between">
                   <h3 class="card-title text-sm">{{ strategy.name }}</h3>
-                  @if (selectedStrategy()?.name === strategy.name) {
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                    </svg>
-                  }
+                  <input type="checkbox" class="checkbox checkbox-primary checkbox-sm"
+                    [checked]="isSelected(strategy.name)"
+                    (click)="$event.stopPropagation()" (change)="toggleStrategy(strategy)" />
                 </div>
                 <p class="text-xs opacity-70">{{ strategy.description }}</p>
                 <div class="flex flex-wrap gap-1 mt-2">
@@ -157,8 +164,8 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
             </svg>
             Back
           </button>
-          <button class="btn btn-primary" [disabled]="!selectedStrategy()" (click)="step.set(3)">
-            Next: Review
+          <button class="btn btn-primary" [disabled]="selectedStrategies().length === 0" (click)="step.set(3)">
+            Next: Review ({{ selectedStrategies().length }})
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
@@ -183,8 +190,12 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
                 <p class="font-semibold uppercase">{{ walletMode() }}</p>
               </div>
               <div>
-                <p class="text-sm opacity-70">Starting Balance</p>
+                <p class="text-sm opacity-70">Balance Per Strategy</p>
                 <p class="font-semibold">{{'$' + walletBalance().toLocaleString() }}</p>
+              </div>
+              <div>
+                <p class="text-sm opacity-70">Total Allocated</p>
+                <p class="font-semibold">{{'$' + (walletBalance() * selectedStrategies().length).toLocaleString() }}</p>
               </div>
               <div>
                 <p class="text-sm opacity-70">API Credentials</p>
@@ -194,94 +205,44 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
           </div>
         </div>
 
-        <!-- Strategy summary -->
-        @if (selectedStrategy(); as strategy) {
-          <div class="card bg-base-200">
-            <div class="card-body">
-              <div class="flex justify-between items-center">
-                <h2 class="card-title">Selected Strategy</h2>
-                <button class="btn btn-ghost btn-sm" (click)="step.set(2)">Change</button>
-              </div>
-              <div class="mt-2">
-                <p class="font-semibold text-lg">{{ strategy.name }}</p>
-                <p class="text-sm opacity-70 mt-1">{{ strategy.description }}</p>
-              </div>
+        <!-- Strategies summary -->
+        <div class="card bg-base-200">
+          <div class="card-body">
+            <div class="flex justify-between items-center">
+              <h2 class="card-title">Selected Strategies ({{ selectedStrategies().length }})</h2>
+              <button class="btn btn-ghost btn-sm" (click)="step.set(2)">Change</button>
+            </div>
 
-              <div class="divider my-2"></div>
-
-              <h3 class="font-semibold text-sm mb-2">Indicator Configuration</h3>
-              <div class="overflow-x-auto">
-                <table class="table table-xs">
-                  <thead>
-                    <tr>
-                      <th>Indicator</th>
-                      <th>Status</th>
-                      <th>Weight</th>
-                      <th>Key Params</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>Z-Score</td>
-                      <td>
-                        <span class="badge badge-xs" [class.badge-success]="strategy.parameters.indicators.zscore.enabled"
-                          [class.badge-ghost]="!strategy.parameters.indicators.zscore.enabled">
-                          {{ strategy.parameters.indicators.zscore.enabled ? 'ON' : 'OFF' }}
-                        </span>
-                      </td>
-                      <td>{{ strategy.parameters.indicators.zscore.weight }}</td>
-                      <td class="text-xs opacity-70">window: {{ strategy.parameters.indicators.zscore.window }}, threshold: {{ strategy.parameters.indicators.zscore.threshold }}</td>
-                    </tr>
-                    <tr>
-                      <td>Entropy</td>
-                      <td>
-                        <span class="badge badge-xs" [class.badge-success]="strategy.parameters.indicators.entropy.enabled"
-                          [class.badge-ghost]="!strategy.parameters.indicators.entropy.enabled">
-                          {{ strategy.parameters.indicators.entropy.enabled ? 'ON' : 'OFF' }}
-                        </span>
-                      </td>
-                      <td>{{ strategy.parameters.indicators.entropy.weight }}</td>
-                      <td class="text-xs opacity-70">threshold: {{ strategy.parameters.indicators.entropy.threshold }}</td>
-                    </tr>
-                    <tr>
-                      <td>GARCH</td>
-                      <td>
-                        <span class="badge badge-xs" [class.badge-success]="strategy.parameters.indicators.garch.enabled"
-                          [class.badge-ghost]="!strategy.parameters.indicators.garch.enabled">
-                          {{ strategy.parameters.indicators.garch.enabled ? 'ON' : 'OFF' }}
-                        </span>
-                      </td>
-                      <td>{{ strategy.parameters.indicators.garch.weight }}</td>
-                      <td class="text-xs opacity-70">p: {{ strategy.parameters.indicators.garch.p }}, q: {{ strategy.parameters.indicators.garch.q }}</td>
-                    </tr>
-                    <tr>
-                      <td>RSI</td>
-                      <td>
-                        <span class="badge badge-xs" [class.badge-success]="strategy.parameters.indicators.rsi.enabled"
-                          [class.badge-ghost]="!strategy.parameters.indicators.rsi.enabled">
-                          {{ strategy.parameters.indicators.rsi.enabled ? 'ON' : 'OFF' }}
-                        </span>
-                      </td>
-                      <td>{{ strategy.parameters.indicators.rsi.weight }}</td>
-                      <td class="text-xs opacity-70">period: {{ strategy.parameters.indicators.rsi.period }}, OB: {{ strategy.parameters.indicators.rsi.overbought }}, OS: {{ strategy.parameters.indicators.rsi.oversold }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
+              <div>
+                <p class="opacity-70">Conservative</p>
+                <p class="font-semibold">{{ countByCategory('conservative') }}</p>
               </div>
-
-              <div class="flex gap-4 mt-3">
-                <div>
-                  <p class="text-xs opacity-70">Min Confidence</p>
-                  <p class="font-semibold">{{ strategy.parameters.min_confidence }}</p>
-                </div>
-                <div>
-                  <p class="text-xs opacity-70">Min Edge</p>
-                  <p class="font-semibold">{{ strategy.parameters.min_edge }}</p>
-                </div>
+              <div>
+                <p class="opacity-70">Realistic</p>
+                <p class="font-semibold">{{ countByCategory('realistic') }}</p>
+              </div>
+              <div>
+                <p class="opacity-70">Dynamic</p>
+                <p class="font-semibold">{{ countByCategory('dynamic') }}</p>
               </div>
             </div>
+
+            <div class="divider my-2"></div>
+
+            <div class="max-h-64 overflow-y-auto">
+              @for (s of selectedStrategies(); track s.name) {
+                <div class="flex justify-between items-center py-1 text-sm">
+                  <span>{{ s.name }}</span>
+                  <div class="flex gap-1">
+                    <span class="badge badge-xs badge-outline">{{ s.parameters.min_confidence }}</span>
+                    <span class="badge badge-xs badge-outline">{{ s.parameters.min_edge }}</span>
+                  </div>
+                </div>
+              }
+            </div>
           </div>
-        }
+        </div>
 
         @if (activateError()) {
           <div class="alert alert-error">
@@ -294,7 +255,14 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
-            <span>Setup complete! Your strategy is now active. Redirecting to dashboard...</span>
+            <span>Setup complete! {{ selectedStrategies().length }} strategies activated. Redirecting to comparison...</span>
+          </div>
+        }
+
+        @if (activating()) {
+          <div class="flex items-center gap-3">
+            <span class="loading loading-spinner loading-sm"></span>
+            <span class="text-sm">Activating {{ activateProgress() }} of {{ selectedStrategies().length }} strategies...</span>
           </div>
         }
 
@@ -309,7 +277,7 @@ import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
             @if (activating()) {
               <span class="loading loading-spinner loading-sm"></span>
             }
-            Activate & Start
+            Activate {{ selectedStrategies().length }} Strategies
           </button>
         </div>
       </div>
@@ -324,6 +292,7 @@ export class SetupPage {
   readonly activating = signal(false);
   readonly activateError = signal('');
   readonly activateSuccess = signal(false);
+  readonly activateProgress = signal(0);
 
   // Step 1: Wallet
   readonly walletMode = signal<'paper' | 'live'>('paper');
@@ -333,10 +302,14 @@ export class SetupPage {
   readonly passphrase = signal('');
   readonly balancePresets = [1000, 5000, 10000, 50000, 100000];
 
-  // Step 2: Strategy - presets are embedded, no fetch needed
+  // Step 2: Strategy - multi-select
   readonly allStrategies = STRATEGY_PRESETS;
   readonly selectedCategory = signal<string>('all');
-  readonly selectedStrategy = signal<StrategyPresetDef | null>(null);
+  private readonly selectedNames = signal<Set<string>>(new Set());
+
+  readonly selectedStrategies = computed(() =>
+    this.allStrategies.filter(s => this.selectedNames().has(s.name))
+  );
 
   readonly categories = [
     { value: 'all', label: 'All' },
@@ -351,9 +324,44 @@ export class SetupPage {
     return this.allStrategies.filter(s => s.category === cat);
   });
 
+  isSelected(name: string): boolean {
+    return this.selectedNames().has(name);
+  }
+
+  toggleStrategy(strategy: StrategyPresetDef): void {
+    const names = new Set(this.selectedNames());
+    if (names.has(strategy.name)) {
+      names.delete(strategy.name);
+    } else {
+      names.add(strategy.name);
+    }
+    this.selectedNames.set(names);
+  }
+
+  selectAllInCategory(): void {
+    const names = new Set(this.selectedNames());
+    for (const s of this.filteredStrategies()) {
+      names.add(s.name);
+    }
+    this.selectedNames.set(names);
+  }
+
+  deselectAllInCategory(): void {
+    const filtered = new Set(this.filteredStrategies().map(s => s.name));
+    const names = new Set(this.selectedNames());
+    for (const name of filtered) {
+      names.delete(name);
+    }
+    this.selectedNames.set(names);
+  }
+
   getCategoryCount(value: string): number {
     if (value === 'all') return this.allStrategies.length;
     return this.allStrategies.filter(s => s.category === value).length;
+  }
+
+  countByCategory(cat: string): number {
+    return this.selectedStrategies().filter(s => s.category === cat).length;
   }
 
   getCategoryDescription(): string {
@@ -365,7 +373,7 @@ export class SetupPage {
       case 'dynamic':
         return 'Higher risk tolerance, aggressive thresholds, more frequent trades. For experienced traders seeking maximum returns.';
       default:
-        return 'Browse all 60 strategies across three risk profiles. Select a category to filter.';
+        return 'Select multiple strategies to run concurrently and compare their performance. Each gets its own independent paper balance.';
     }
   }
 
@@ -380,11 +388,12 @@ export class SetupPage {
   }
 
   async activate(): Promise<void> {
-    const strategy = this.selectedStrategy();
-    if (!strategy) return;
+    const strategies = this.selectedStrategies();
+    if (strategies.length === 0) return;
 
     this.activating.set(true);
     this.activateError.set('');
+    this.activateProgress.set(0);
 
     try {
       // Deactivate all existing active strategies
@@ -395,47 +404,52 @@ export class SetupPage {
         await this.pb.updateRecord('strategy_configs', s.id, { active: false });
       }
 
-      // Check if this strategy already exists in PocketBase by name
-      const existing = await this.pb.listRecords<RecordModel>(
-        'strategy_configs', 1, 1, '-created', `name = "${strategy.name}"`,
-      );
+      // Activate each selected strategy
+      for (let i = 0; i < strategies.length; i++) {
+        const strategy = strategies[i];
+        this.activateProgress.set(i + 1);
 
-      if (existing.length > 0) {
-        // Update existing record
-        await this.pb.updateRecord('strategy_configs', existing[0].id, {
-          parameters: strategy.parameters,
-          description: strategy.description,
-          active: true,
-          mode: this.walletMode(),
-        });
-      } else {
-        // Create new record in PocketBase
-        await this.pb.createRecord('strategy_configs', {
-          name: strategy.name,
-          description: strategy.description,
-          parameters: strategy.parameters,
-          active: true,
-          mode: this.walletMode(),
-          version: 1,
-        });
+        // Check if strategy exists
+        const existing = await this.pb.listRecords<RecordModel>(
+          'strategy_configs', 1, 1, '-created', `name = "${strategy.name}"`,
+        );
+
+        if (existing.length > 0) {
+          await this.pb.updateRecord('strategy_configs', existing[0].id, {
+            parameters: strategy.parameters,
+            description: strategy.description,
+            active: true,
+            mode: this.walletMode(),
+          });
+        } else {
+          await this.pb.createRecord('strategy_configs', {
+            name: strategy.name,
+            description: strategy.description,
+            parameters: strategy.parameters,
+            active: true,
+            mode: this.walletMode(),
+            version: 1,
+          });
+        }
       }
 
-      // Update portfolio balance
+      // Update portfolio balance (total across all strategies)
       const portfolios = await this.pb.listRecords<RecordModel>(
         'portfolio', 1, 1, '-created',
       );
+      const totalBalance = this.walletBalance() * strategies.length;
       if (portfolios.length > 0) {
         await this.pb.updateRecord('portfolio', portfolios[0].id, {
-          balance: this.walletBalance(),
-          peak_balance: this.walletBalance(),
+          balance: totalBalance,
+          peak_balance: totalBalance,
           mode: this.walletMode(),
         });
       }
 
       this.activateSuccess.set(true);
-      setTimeout(() => this.router.navigate(['/dashboard']), 2000);
+      setTimeout(() => this.router.navigate(['/comparison']), 2000);
     } catch (e) {
-      this.activateError.set('Failed to activate strategy. Please try again.');
+      this.activateError.set('Failed to activate strategies. Please try again.');
       console.error('Activation failed:', e);
     } finally {
       this.activating.set(false);
