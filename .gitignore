@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# PocketBase data
+apps/pocketbase/pb_data/
+
+# Environment
+.env
+docker/.env
+
+# Generated types
+packages/shared-schemas/generated/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Angular
+.angular/
