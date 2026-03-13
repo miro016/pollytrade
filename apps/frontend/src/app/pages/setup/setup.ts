@@ -1,26 +1,9 @@
-import { Component, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, inject, signal, computed } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { RecordModel } from 'pocketbase';
 import { PocketBaseService } from '../../services/pocketbase.service';
-
-interface StrategyPreset extends RecordModel {
-  name: string;
-  description: string;
-  parameters: {
-    indicators: {
-      zscore: { enabled: boolean; window: number; threshold: number; weight: number };
-      entropy: { enabled: boolean; threshold: number; weight: number };
-      garch: { enabled: boolean; p: number; q: number; weight: number };
-      rsi: { enabled: boolean; period: number; overbought: number; oversold: number; weight: number };
-    };
-    min_confidence: number;
-    min_edge: number;
-  };
-  active: boolean;
-  mode: 'paper' | 'live';
-  version: number;
-}
+import { STRATEGY_PRESETS, StrategyPresetDef } from './strategy-presets';
 
 @Component({
   selector: 'app-setup',
@@ -138,41 +121,34 @@ interface StrategyPreset extends RecordModel {
           <span>{{ getCategoryDescription() }}</span>
         </div>
 
-        @if (loading()) {
-          <div class="text-center py-12">
-            <span class="loading loading-spinner loading-lg"></span>
-            <p class="mt-2 opacity-50">Loading strategies...</p>
-          </div>
-        } @else {
-          <!-- Strategy cards -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            @for (strategy of filteredStrategies(); track strategy.id) {
-              <div class="card bg-base-200 cursor-pointer transition-all hover:shadow-lg"
-                [class.ring-2]="selectedStrategy()?.id === strategy.id"
-                [class.ring-primary]="selectedStrategy()?.id === strategy.id"
-                (click)="selectedStrategy.set(strategy)">
-                <div class="card-body p-4">
-                  <div class="flex items-start justify-between">
-                    <h3 class="card-title text-sm">{{ strategy.name }}</h3>
-                    @if (selectedStrategy()?.id === strategy.id) {
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary shrink-0" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                      </svg>
-                    }
-                  </div>
-                  <p class="text-xs opacity-70">{{ strategy.description }}</p>
-                  <div class="flex flex-wrap gap-1 mt-2">
-                    <span class="badge badge-xs badge-outline">Conf: {{ strategy.parameters.min_confidence }}</span>
-                    <span class="badge badge-xs badge-outline">Edge: {{ strategy.parameters.min_edge }}</span>
-                    @for (ind of getEnabledIndicators(strategy); track ind) {
-                      <span class="badge badge-xs badge-primary badge-outline">{{ ind }}</span>
-                    }
-                  </div>
+        <!-- Strategy cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          @for (strategy of filteredStrategies(); track strategy.name) {
+            <div class="card bg-base-200 cursor-pointer transition-all hover:shadow-lg"
+              [class.ring-2]="selectedStrategy()?.name === strategy.name"
+              [class.ring-primary]="selectedStrategy()?.name === strategy.name"
+              (click)="selectedStrategy.set(strategy)">
+              <div class="card-body p-4">
+                <div class="flex items-start justify-between">
+                  <h3 class="card-title text-sm">{{ strategy.name }}</h3>
+                  @if (selectedStrategy()?.name === strategy.name) {
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                    </svg>
+                  }
+                </div>
+                <p class="text-xs opacity-70">{{ strategy.description }}</p>
+                <div class="flex flex-wrap gap-1 mt-2">
+                  <span class="badge badge-xs badge-outline">Conf: {{ strategy.parameters.min_confidence }}</span>
+                  <span class="badge badge-xs badge-outline">Edge: {{ strategy.parameters.min_edge }}</span>
+                  @for (ind of getEnabledIndicators(strategy); track ind) {
+                    <span class="badge badge-xs badge-primary badge-outline">{{ ind }}</span>
+                  }
                 </div>
               </div>
-            }
-          </div>
-        }
+            </div>
+          }
+        </div>
 
         <div class="flex justify-between">
           <button class="btn btn-ghost" (click)="step.set(1)">
@@ -340,12 +316,11 @@ interface StrategyPreset extends RecordModel {
     }
   `,
 })
-export class SetupPage implements OnInit {
+export class SetupPage {
   private readonly pb = inject(PocketBaseService);
   private readonly router = inject(Router);
 
   readonly step = signal(1);
-  readonly loading = signal(false);
   readonly activating = signal(false);
   readonly activateError = signal('');
   readonly activateSuccess = signal(false);
@@ -358,10 +333,10 @@ export class SetupPage implements OnInit {
   readonly passphrase = signal('');
   readonly balancePresets = [1000, 5000, 10000, 50000, 100000];
 
-  // Step 2: Strategy
-  readonly allStrategies = signal<StrategyPreset[]>([]);
+  // Step 2: Strategy - presets are embedded, no fetch needed
+  readonly allStrategies = STRATEGY_PRESETS;
   readonly selectedCategory = signal<string>('all');
-  readonly selectedStrategy = signal<StrategyPreset | null>(null);
+  readonly selectedStrategy = signal<StrategyPresetDef | null>(null);
 
   readonly categories = [
     { value: 'all', label: 'All' },
@@ -372,39 +347,13 @@ export class SetupPage implements OnInit {
 
   readonly filteredStrategies = computed(() => {
     const cat = this.selectedCategory();
-    const all = this.allStrategies();
-    if (cat === 'all') return all;
-    return all.filter(s => this.getStrategyCategory(s.name) === cat);
+    if (cat === 'all') return this.allStrategies;
+    return this.allStrategies.filter(s => s.category === cat);
   });
 
-  ngOnInit(): void {
-    this.loadStrategies();
-  }
-
-  async loadStrategies(): Promise<void> {
-    this.loading.set(true);
-    try {
-      const items = await this.pb.listRecords<StrategyPreset>(
-        'strategy_configs', 1, 100, 'name',
-      );
-      this.allStrategies.set(items);
-    } catch (e) {
-      console.error('Failed to load strategies:', e);
-    } finally {
-      this.loading.set(false);
-    }
-  }
-
-  getStrategyCategory(name: string): string {
-    if (name.startsWith('Conservative')) return 'conservative';
-    if (name.startsWith('Realistic')) return 'realistic';
-    if (name.startsWith('Dynamic')) return 'dynamic';
-    return 'conservative';
-  }
-
   getCategoryCount(value: string): number {
-    if (value === 'all') return this.allStrategies().length;
-    return this.allStrategies().filter(s => this.getStrategyCategory(s.name) === value).length;
+    if (value === 'all') return this.allStrategies.length;
+    return this.allStrategies.filter(s => s.category === value).length;
   }
 
   getCategoryDescription(): string {
@@ -420,7 +369,7 @@ export class SetupPage implements OnInit {
     }
   }
 
-  getEnabledIndicators(strategy: StrategyPreset): string[] {
+  getEnabledIndicators(strategy: StrategyPresetDef): string[] {
     const indicators = strategy.parameters.indicators;
     const enabled: string[] = [];
     if (indicators.zscore.enabled) enabled.push('Z-Score');
@@ -438,19 +387,38 @@ export class SetupPage implements OnInit {
     this.activateError.set('');
 
     try {
-      // Deactivate all strategies first
-      const active = await this.pb.listRecords<StrategyPreset>(
+      // Deactivate all existing active strategies
+      const active = await this.pb.listRecords<RecordModel>(
         'strategy_configs', 1, 100, '-created', 'active = true',
       );
       for (const s of active) {
         await this.pb.updateRecord('strategy_configs', s.id, { active: false });
       }
 
-      // Activate selected strategy
-      await this.pb.updateRecord('strategy_configs', strategy.id, {
-        active: true,
-        mode: this.walletMode(),
-      });
+      // Check if this strategy already exists in PocketBase by name
+      const existing = await this.pb.listRecords<RecordModel>(
+        'strategy_configs', 1, 1, '-created', `name = "${strategy.name}"`,
+      );
+
+      if (existing.length > 0) {
+        // Update existing record
+        await this.pb.updateRecord('strategy_configs', existing[0].id, {
+          parameters: strategy.parameters,
+          description: strategy.description,
+          active: true,
+          mode: this.walletMode(),
+        });
+      } else {
+        // Create new record in PocketBase
+        await this.pb.createRecord('strategy_configs', {
+          name: strategy.name,
+          description: strategy.description,
+          parameters: strategy.parameters,
+          active: true,
+          mode: this.walletMode(),
+          version: 1,
+        });
+      }
 
       // Update portfolio balance
       const portfolios = await this.pb.listRecords<RecordModel>(
