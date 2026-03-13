@@ -25,7 +25,7 @@ class PocketBaseClient:
     async def authenticate(self, email: str, password: str) -> str:
         """Authenticate as admin and store token."""
         resp = await self._client.post(
-            "/api/admins/auth-with-password",
+            "/api/collections/_superusers/auth-with-password",
             json={"identity": email, "password": password},
         )
         resp.raise_for_status()
