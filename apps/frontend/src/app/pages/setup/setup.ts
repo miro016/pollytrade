@@ -396,26 +396,21 @@ export class SetupPage {
     this.activateProgress.set(0);
 
     try {
-      // Deactivate all existing active strategies
-      const active = await this.pb.listRecords<RecordModel>(
-        'strategy_configs', 1, 100, '-created', 'active = true',
+      // Load all existing strategy configs
+      const allExisting = await this.pb.listRecords<RecordModel>(
+        'strategy_configs', 1, 100, '-created',
       );
-      for (const s of active) {
-        await this.pb.updateRecord('strategy_configs', s.id, { active: false });
-      }
+      const existingByName = new Map(allExisting.map(s => [s['name'], s]));
+      const selectedNames = new Set(strategies.map(s => s.name));
 
-      // Activate each selected strategy
+      // Create or update selected strategies (set active=true)
       for (let i = 0; i < strategies.length; i++) {
         const strategy = strategies[i];
         this.activateProgress.set(i + 1);
 
-        // Check if strategy exists
-        const existing = await this.pb.listRecords<RecordModel>(
-          'strategy_configs', 1, 1, '-created', `name = "${strategy.name}"`,
-        );
-
-        if (existing.length > 0) {
-          await this.pb.updateRecord('strategy_configs', existing[0].id, {
+        const existing = existingByName.get(strategy.name);
+        if (existing) {
+          await this.pb.updateRecord('strategy_configs', existing['id'], {
             parameters: strategy.parameters,
             description: strategy.description,
             active: true,
@@ -433,13 +428,20 @@ export class SetupPage {
         }
       }
 
+      // Deactivate strategies that were NOT selected
+      for (const existing of allExisting) {
+        if (existing['active'] && !selectedNames.has(existing['name'])) {
+          await this.pb.updateRecord('strategy_configs', existing['id'], { active: false });
+        }
+      }
+
       // Update portfolio balance (total across all strategies)
       const portfolios = await this.pb.listRecords<RecordModel>(
         'portfolio', 1, 1, '-created',
       );
       const totalBalance = this.walletBalance() * strategies.length;
       if (portfolios.length > 0) {
-        await this.pb.updateRecord('portfolio', portfolios[0].id, {
+        await this.pb.updateRecord('portfolio', portfolios[0]['id'], {
           balance: totalBalance,
           peak_balance: totalBalance,
           mode: this.walletMode(),
