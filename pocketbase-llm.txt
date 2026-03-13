@@ -1,0 +1,932 @@
+# PocketBase — LLM Reference
+# Source: https://pocketbase.io/docs/
+# Version: 0.36.6
+# Generated: 2026-03-12
+
+> PocketBase is an open-source backend in a single binary: embedded SQLite database with
+> realtime subscriptions, built-in auth management, a dashboard UI, and a REST-ish API.
+> It is NOT recommended for production-critical applications until v1.0.0 is released.
+> Always check the CHANGELOG before upgrading: https://github.com/pocketbase/pocketbase/blob/master/CHANGELOG.md
+
+---
+
+## Table of Contents
+
+1. Getting Started
+2. Directory Structure
+3. Collections
+   3.1 Collection Types
+   3.2 Field Types
+4. API Rules & Filters
+   4.1 Rule Syntax
+   4.2 Special Identifiers & Modifiers
+   4.3 Helper Functions
+5. Authentication
+   5.1 Password Auth
+   5.2 OTP Auth
+   5.3 OAuth2
+   5.4 Multi-Factor Authentication (MFA)
+   5.5 User Impersonation & API Keys
+   5.6 Token Verification
+6. Files Upload & Handling
+   6.1 Uploading
+   6.2 Deleting
+   6.3 File URL & Thumbnails
+   6.4 Protected Files
+   6.5 Storage Options
+7. Working with Relations
+8. Going to Production
+   8.1 Deployment Strategies
+   8.2 Backup & Restore
+   8.3 Recommendations & Security
+9. Extending PocketBase (JavaScript / JSVM)
+   9.1 App Hooks
+   9.2 Mailer Hooks
+   9.3 Realtime Hooks
+   9.4 Record Model Hooks
+   9.5 Collection Model Hooks
+   9.6 Request Hooks
+10. Web APIs Reference
+11. SDK Quick Reference
+12. Best Practices & Security Notes
+
+---
+
+## 1. Getting Started
+
+Download the prebuilt binary (~11-12 MB) from:
+  https://github.com/pocketbase/pocketbase/releases
+
+Start the server:
+  ./pocketbase serve
+
+On first run, an installer link is opened automatically to create the first superuser.
+Or create manually:
+  ./pocketbase superuser create EMAIL PASS
+
+Default routes:
+  http://127.0.0.1:8090         -> serves static content from pb_public/ (if present)
+  http://127.0.0.1:8090/_/      -> superusers dashboard
+  http://127.0.0.1:8090/api/    -> REST-ish API
+
+HTTPS (with automatic Let's Encrypt TLS):
+  ./pocketbase serve yourdomain.com
+
+Get all available CLI commands:
+  ./pocketbase --help
+  ./pocketbase [command] --help
+
+---
+
+## 2. Directory Structure
+
+  myapp/
+  |-- pocketbase          <- the single binary
+  |-- pb_data/            <- application data + uploaded files (add to .gitignore)
+  |-- pb_migrations/      <- JS/Go migration files (safe to commit)
+  +-- pb_hooks/           <- JS hook files for extending behavior
+
+---
+
+## 3. Collections
+
+Collections are the core data model in PocketBase. Each collection maps to an SQLite table.
+A single entry in a collection is called a record.
+
+Collections can be managed via:
+  - Dashboard UI
+  - Web APIs (superusers only for schema changes)
+  - Go or JavaScript migrations (recommended for version-controlled schema changes)
+
+### 3.1 Collection Types
+
+Base
+  Default type. Stores arbitrary application data (posts, products, etc.).
+
+View
+  Read-only collection populated by a raw SQL SELECT query.
+  Example:
+    SELECT posts.id, posts.name, count(comments.id) as totalComments
+    FROM posts
+    LEFT JOIN comments ON comments.postId = posts.id
+    GROUP BY posts.id
+
+  View collections do NOT fire realtime events (no create/update/delete operations).
+
+Auth
+  Extends Base with special authentication fields:
+    email, emailVisibility, verified, password, tokenKey
+  These system fields cannot be renamed or deleted, only configured.
+  Multiple Auth collections are supported (users, managers, clients, etc.).
+  Each Auth collection has separate login endpoints and independent records.
+
+  Access control patterns on Auth collections:
+    Role/Group:    @request.auth.role = "staff"
+    Ownership:     @request.auth.id != "" && author = @request.auth.id
+    Managed:       Use the special "Manage" API rule
+    Mixed:         @request.auth.id != "" && (@request.auth.role = "staff" || author = @request.auth.id)
+
+### 3.2 Field Types
+
+All fields (except JSONField) are non-nullable and use a zero default.
+
+BoolField
+  Type: bool | Default: false
+
+NumberField
+  Type: float64 | Default: 0
+  Modifiers: fieldName+ (add), fieldName- (subtract)
+
+TextField
+  Type: string | Default: ""
+  Modifiers: fieldName:autogenerate (requires AutogeneratePattern option)
+
+EmailField
+  Type: string (valid email) | Default: ""
+
+URLField
+  Type: string (valid URL) | Default: ""
+
+EditorField
+  Type: HTML string | Default: ""
+
+DateField
+  Type: datetime string | Default: ""
+  Format: Y-m-d H:i:s.uZ (RFC3399), e.g. "2024-11-10 18:45:27.123Z"
+  Dates are compared as strings; always use full datetime format in filters.
+
+AutodateField
+  Type: datetime string auto-set on create/update (used for "created", "updated" fields)
+
+SelectField
+  Single (MaxSelect <= 1): string value
+  Multiple (MaxSelect >= 2): array of strings
+  Modifiers: fieldName+ (append), +fieldName (prepend), fieldName- (remove)
+
+FileField
+  Single (MaxSelect <= 1): filename string
+  Multiple (MaxSelect >= 2): array of filename strings
+  Default max file size: ~5MB (configurable per field)
+  Modifiers: fieldName+ (append), +fieldName (prepend), fieldName- (delete file)
+  Files stored in pb_data/storage or S3 depending on settings.
+
+RelationField
+  Single (MaxSelect <= 1): record ID string
+  Multiple (MaxSelect >= 2): array of record IDs
+  Modifiers: fieldName+ (append), +fieldName (prepend), fieldName- (remove)
+
+JSONField
+  Type: any serialized JSON | Default: null (NULLABLE -- exception to the zero-default rule)
+
+GeoPoint
+  Type: {"lon": float, "lat": float} | Default: {"lon": 0, "lat": 0} ("Null Island")
+  Go: types.GeoPoint{Lon: 12.34, Lat: 45.67}
+  JS: {"lon": 12.34, "lat": 45.67}
+
+---
+
+## 4. API Rules & Filters
+
+### 4.1 Rule Syntax
+
+Each collection has 5 rules: listRule, viewRule, createRule, updateRule, deleteRule.
+Auth collections additionally have options.manageRule.
+
+Rule values:
+  null (locked)   -> only superusers can perform the action (DEFAULT)
+  ""  (empty)     -> anyone (superusers, authenticated users, guests)
+  "<expression>"  -> only requests matching the filter expression
+
+Rules also act as record filters (e.g. listRule = `status = "active"` returns only active records).
+
+HTTP response codes:
+  listRule not satisfied   -> 200 with empty items
+  createRule not satisfied -> 400
+  viewRule/updateRule/deleteRule not satisfied -> 404
+  rule is "locked" and requester is not a superuser -> 403
+
+Superusers bypass all API rules.
+
+Filter syntax:
+  OPERAND OPERATOR OPERAND
+  where OPERAND is: field, string, number, null, true, false
+
+Operators:
+  =       equal
+  !=      not equal
+  >       greater than
+  >=      greater than or equal
+  <       less than
+  <=      less than or equal
+  ~       like/contains (auto-wraps right operand in %)
+  !~      not like/contains
+  ?=      any/at-least-one-of equal
+  ?!=     any/at-least-one-of not equal
+  ?>      any/at-least-one-of greater than
+  ?>=     any/at-least-one-of greater than or equal
+  ?<      any/at-least-one-of less than
+  ?<=     any/at-least-one-of less than or equal
+  ?~      any/at-least-one-of like/contains
+  ?!~     any/at-least-one-of not like/contains
+
+Grouping: (...), && (AND), || (OR)
+Comments: // single-line comments supported
+
+Array/multi-value fields apply match-all by default; prefix operator with ? for any-match.
+  multiRelation.title ?= "test"   <- at least one title matches "test"
+  multiRelation.title = "test"    <- ALL titles must match "test"
+
+Available filter fields:
+  - Collection schema fields (including nested relation fields)
+  - @request.*  (request context)
+  - @collection.*  (cross-collection joins)
+
+@request fields:
+  @request.context            -> e.g. "default", "oauth2", "otp", "password", "realtime", "protectedFile"
+  @request.method             -> HTTP method string, e.g. "GET"
+  @request.headers.*          -> header values (lowercased, "-" replaced with "_")
+  @request.query.*            -> query parameter values (all strings)
+  @request.auth.*             -> current authenticated model fields
+  @request.body.*             -> submitted body parameters
+
+@collection fields (cross-collection join, no direct relation required):
+  @collection.news.categoryId ?= categoryId
+  @collection.courseRegistrations:auth.user ?= @request.auth.id  <- alias with :alias suffix
+
+### 4.2 Special Identifiers & Modifiers
+
+Datetime macros (UTC-based):
+  @now, @second, @minute, @hour, @weekday, @day, @month, @year
+  @yesterday, @tomorrow
+  @todayStart, @todayEnd, @monthStart, @monthEnd, @yearStart, @yearEnd
+
+Example: @request.body.publicDate >= @now
+
+:isset modifier (only for @request.* fields)
+  Check if a field was submitted with the request.
+  Example: @request.body.role:isset = false  <- disallow submitting "role"
+
+:changed modifier (only for @request.body.* fields)
+  Check if a field was submitted AND changed.
+  Example: @request.body.role:changed = false  <- disallow changing "role"
+  Equivalent: (@request.body.role:isset = false || @request.body.role = role)
+
+:length modifier
+  Check item count in array fields (file, select, relation).
+  Example: @request.body.someSelectField:length > 1
+
+:each modifier
+  Apply condition to every item in a multi-value field.
+  Example: someSelectField:each ~ "pb_%"
+
+:lower modifier
+  Case-insensitive string comparison (ASCII only unless ICU extension loaded).
+  Example: title:lower ~ "test"
+
+### 4.3 Helper Functions
+
+geoDistance(lonA, latA, lonB, latB) -> float (kilometres, Haversine formula)
+  Example: geoDistance(address.lon, address.lat, 23.32, 42.69) < 25
+
+strftime(format, [time-value, modifiers...]) -> date string
+  Based on SQLite strftime; NULL results normalized.
+  Example: strftime('%Y-%m', created) = "2026-01"
+
+### 4.4 Filter Examples
+
+Allow only authenticated users:
+  @request.auth.id != ""
+
+Allow authenticated users; return only active or pending records:
+  @request.auth.id != "" && (status = "active" || status = "pending")
+
+Allow only users in allowed_users relation field:
+  @request.auth.id != "" && allowed_users.id ?= @request.auth.id
+
+Public access; filter records where title starts with "Lorem":
+  title ~ "Lorem%"
+
+---
+
+## 5. Authentication
+
+PocketBase Web APIs are fully stateless -- no server-side sessions, no stored tokens.
+Authentication is via the Authorization header: Authorization: YOUR_AUTH_TOKEN
+
+"Logout" = clear the local token: pb.authStore.clear()
+
+Superusers (_superusers collection):
+  - Cannot use OAuth2
+  - Bypass all collection API rules
+
+### 5.1 Password Auth
+
+Enable "Identity/Password" option in auth collection settings.
+Default identity field: email (any unique field with UNIQUE index can be used).
+
+JavaScript example:
+  const authData = await pb.collection("users").authWithPassword("test@example.com", "password");
+  pb.authStore.isValid    // true
+  pb.authStore.token      // JWT token string
+  pb.authStore.record.id  // authenticated record ID
+  pb.authStore.clear()    // "logout"
+
+### 5.2 OTP (One-Time Password)
+
+Enable "One-time password (OTP)" in auth collection options.
+Returns otpId even if email not found (enumeration protection).
+On successful OTP validation, user email is automatically marked verified.
+SECURITY: OTP alone can be less secure (0-9 digits); prefer combining with MFA.
+
+JavaScript example:
+  const result = await pb.collection("users").requestOTP("test@example.com");
+  // user enters code from email
+  const authData = await pb.collection("users").authWithOTP(result.otpId, "OTP_CODE");
+
+### 5.3 OAuth2
+
+Supported providers: Google, GitHub, Microsoft, and others.
+Requires Client ID and Client Secret from the provider's developer dashboard.
+Callback/redirect URL for "all-in-one" method: https://yourdomain.com/api/oauth2-redirect
+
+All-in-one method (recommended -- uses popup + SSE, no page reload):
+  pb.collection("users").authWithOAuth2({ provider: "google" }).then((authData) => { ... });
+  IMPORTANT: Do not use async/await on Safari (popup may be blocked); use .then() instead.
+
+Manual code exchange method:
+  Requires 2 endpoints: a links page and a redirect handler.
+  1. List auth methods: pb.collection("users").listAuthMethods()
+  2. Redirect user to: provider.authURL + redirectURL
+  3. Store provider data in localStorage for state verification
+  4. In redirect handler: verify state, then call pb.collection("users").authWithOAuth2Code(...)
+
+Apple sign-in note:
+  Redirect handler MUST accept POST requests to receive name and email.
+  For ID only: replace response_mode=form_post with response_mode=query.
+
+### 5.4 Multi-Factor Authentication (MFA)
+
+Available since v0.23+. Requires 2 different auth methods; order does not matter.
+
+Flow:
+  1. Authenticate with method A -> receives 401 with {"mfaId": "..."} in body
+  2. Authenticate with method B, passing mfaId as body or query param
+  3. On success -> standard auth response (token + record)
+
+MFA session stored in _mfas system collection.
+
+JavaScript example (password + OTP):
+  try {
+    await pb.collection("users").authWithPassword("email", "password");
+  } catch (err) {
+    const mfaId = err.response?.mfaId;
+    if (!mfaId) throw err;
+    const result = await pb.collection("users").requestOTP("email");
+    await pb.collection("users").authWithOTP(result.otpId, "OTP_CODE", { mfaId });
+  }
+
+SECURITY: Enable MFA for _superusers in production (Dashboard -> Collections -> _superusers -> Options).
+
+### 5.5 User Impersonation & API Keys
+
+Superusers can generate auth tokens for any record via the Impersonate endpoint.
+Impersonate tokens: custom duration (seconds), NOT renewable.
+SDKs return a standalone in-memory client for the impersonated session.
+
+JavaScript example:
+  await pb.collection("_superusers").authWithPassword("admin@example.com", "password");
+  const client = await pb.collection("users").impersonate("USER_RECORD_ID", 3600);
+  const items = await client.collection("example").getFullList();
+
+API Keys (workaround):
+  PocketBase has no dedicated API keys. Use a non-renewable _superusers impersonate token instead.
+  Generate via: Dashboard -> Collections -> _superusers -> {superuser} -> Impersonate dropdown.
+  SECURITY: Use _superusers tokens ONLY for internal server-to-server communication.
+  Revoke: change the superuser's password, or change the shared auth token secret to invalidate all.
+
+### 5.6 Token Verification
+
+No dedicated endpoint. Use authRefresh to validate a token from a 3rd-party app:
+  pb.collection("users").authRefresh()
+  -> On valid token: returns new token + latest user data
+  -> On invalid token: returns error
+
+authRefresh does NOT invalidate previous tokens. Algorithm: HS256 (very low overhead).
+
+---
+
+## 6. Files Upload & Handling
+
+### 6.1 Uploading
+
+Files require a FileField on the collection (configurable max size, max count).
+Use multipart/form-data requests for create/update.
+
+JavaScript example (create record with files):
+  const record = await pb.collection("example").create({
+    title: "Hello",
+    documents: [
+      new File(["content 1"], "file1.txt"),
+      new File(["content 2"], "file2.txt"),
+    ],
+  });
+
+Append to existing multi-file field (fieldName+):
+  await pb.collection("example").update("RECORD_ID", {
+    "documents+": new File(["content 3"], "file3.txt"),
+  });
+
+Prepend to existing multi-file field (+fieldName):
+  await pb.collection("example").update("RECORD_ID", {
+    "+documents": new File(["content 0"], "file0.txt"),
+  });
+
+Each uploaded file is stored as: originalname_randomsuffix.ext (e.g. test_52iwbgds7l.png)
+
+### 6.2 Deleting
+
+Delete all files in a field:
+  await pb.collection("example").update("RECORD_ID", { documents: [] });
+
+Delete specific files (fieldName-):
+  await pb.collection("example").update("RECORD_ID", {
+    "documents-": ["file1.pdf", "file2.txt"],
+  });
+
+### 6.3 File URL & Thumbnails
+
+File URL pattern:
+  http://127.0.0.1:8090/api/files/COLLECTION_ID_OR_NAME/RECORD_ID/FILENAME
+
+Thumbnail URL (jpg, png, gif first frame, partial webp):
+  ?thumb=WxH       -> crop from center
+  ?thumb=WxHt      -> crop from top
+  ?thumb=WxHb      -> crop from bottom
+  ?thumb=WxHf      -> fit inside (no crop)
+  ?thumb=0xH       -> resize by height (preserve ratio)
+  ?thumb=Wx0       -> resize by width (preserve ratio)
+  Example: ?thumb=100x300
+
+Force download (not preview):
+  append ?download=1 to the file URL
+
+SDK helper:
+  const url = pb.files.getURL(record, filename, { thumb: "100x250" });
+
+### 6.4 Protected Files
+
+By default all files are publicly accessible by URL.
+Mark a FileField as "Protected" in its options for access control.
+
+Protected files require a short-lived file token (~2 minutes TTL):
+  const fileToken = await pb.files.getToken();
+  const url = pb.files.getURL(record, record.myPrivateFile, { token: fileToken });
+
+Access is granted only if the request satisfies the collection's viewRule.
+
+### 6.5 Storage Options
+
+Default: local disk at pb_data/storage/ (recommended for most cases).
+Alternative: any S3-compatible storage (AWS S3, MinIO, Wasabi, DigitalOcean Spaces, etc.)
+Configure: Dashboard -> Settings -> Files storage.
+SECURITY: Use a separate S3 bucket for backups.
+
+---
+
+## 7. Working with Relations
+
+Relations are defined via RelationField pointing to another collection.
+Support single (string ID) or multiple (array of IDs) values.
+
+Load related records using the `expand` query parameter:
+  GET /api/collections/posts/records?expand=author,categories
+
+Nested expand (dot notation):
+  GET /api/collections/posts/records?expand=author.organization
+
+Back-relations (from the referenced collection's perspective):
+  GET /api/collections/users/records?expand=posts_via_author
+
+Access modifiers on relations in filter rules:
+  Match-all (default):    someRelField.status = "active"   <- ALL related records must be active
+  Match-any:              someRelField.status ?= "active"  <- ANY related record is active
+
+---
+
+## 8. Going to Production
+
+### 8.1 Deployment Strategies
+
+Minimal setup (single server, auto TLS via Let's Encrypt):
+  ./pocketbase serve yourdomain.com
+  Runs as root to bind ports 80/443. For non-root:
+    sudo setcap 'cap_net_bind_service=+ep' /path/to/pocketbase
+
+Systemd service (/lib/systemd/system/pocketbase.service):
+  [Unit]
+  Description = pocketbase
+  [Service]
+  Type = simple
+  User = root
+  Group = root
+  LimitNOFILE = 4096
+  Restart = always
+  RestartSec = 5s
+  StandardOutput = append:/root/pb/std.log
+  StandardError = append:/root/pb/std.log
+  WorkingDirectory = /root/pb
+  ExecStart = /root/pb/pocketbase serve yourdomain.com
+  [Install]
+  WantedBy = multi-user.target
+
+  systemctl enable pocketbase.service
+  systemctl start pocketbase
+
+Reverse proxy (NGINX example):
+  server {
+    listen 80;
+    server_name example.com;
+    client_max_body_size 10M;
+    location / {
+      proxy_set_header Connection '';
+      proxy_http_version 1.1;
+      proxy_read_timeout 360s;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_pass http://127.0.0.1:8090;
+    }
+  }
+  NOTE: Configure "User IP proxy headers" (X-Real-IP, X-Forwarded-For) in PocketBase settings
+        when running behind a reverse proxy for accurate IP logging and rate limiting.
+
+Caddy reverse proxy:
+  example.com {
+    request_body { max_size 10MB }
+    reverse_proxy 127.0.0.1:8090 {
+      transport http { read_timeout 360s }
+    }
+  }
+
+Docker (no official image; minimal Dockerfile):
+  FROM alpine:latest
+  ARG PB_VERSION=0.36.6
+  RUN apk add --no-cache unzip ca-certificates
+  ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
+  RUN unzip /tmp/pb.zip -d /pb/
+  EXPOSE 8080
+  CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8080"]
+
+  Mount a volume at /pb/pb_data to persist data.
+
+### 8.2 Backup & Restore
+
+Manual: copy/replace pb_data/ directory (stop the app first for transactional safety).
+
+Built-in (v0.16+): Dashboard -> Settings -> Backups
+  - Local storage (default) or S3-compatible bucket
+  - Generated backup = full ZIP snapshot of pb_data/ (excluding S3-stored files and local backups)
+  - During backup, app is temporarily set to read-only mode
+  - For large pb_data (2GB+), prefer: sqlite3 .backup + rsync over the built-in backup
+
+### 8.3 Recommendations & Security
+
+[HIGHLY RECOMMENDED] Use an external SMTP server:
+  Default Unix sendmail is not suitable for production (spam/delivery issues).
+  Recommended services: MailerSend, Brevo, SendGrid, Mailgun, AWS SES.
+  Configure: Dashboard -> Settings -> Mail settings.
+
+[HIGHLY RECOMMENDED] Enable MFA for superusers:
+  Dashboard -> Collections -> _superusers -> Options -> MFA + OTP
+  Manual OTP for emergencies: ./pocketbase superuser otp EMAIL
+
+[HIGHLY RECOMMENDED] Enable rate limiter (v0.23+):
+  Dashboard -> Settings -> Application -> Rate limiting
+  Or use an external rate limiter via reverse proxy for advanced configurations.
+
+[OPTIONAL] Increase file descriptor limit:
+  ulimit -n 4096 (before starting PocketBase)
+  Needed when handling many concurrent realtime (SSE) connections.
+
+[OPTIONAL] Set GOMEMLIMIT for memory-constrained environments:
+  GOMEMLIMIT=512MiB ./pocketbase serve ...
+  Instructs the Go GC to be more aggressive; does not hard-cap memory.
+
+[OPTIONAL] Enable settings encryption:
+  Encrypts SMTP password and S3 credentials stored in the database.
+  1. Set env var: export PB_ENCRYPTION_KEY="32characterrandomstring"
+  2. Start with flag: ./pocketbase serve --encryptionEnv=PB_ENCRYPTION_KEY
+
+---
+
+## 9. Extending PocketBase (JavaScript / JSVM)
+
+Place .js hook files in pb_hooks/ directory. They are auto-loaded on startup.
+PocketBase embeds a JavaScript runtime (Goja) that evaluates these files server-side.
+Full JS types reference: https://pocketbase.io/jsvm/index.html
+
+Hook handler signature: function(e) {}
+Call e.next() to continue the execution chain.
+Throw an error or skip e.next() to stop the chain.
+
+### 9.1 App Hooks
+
+onBootstrap(e)           -> fires when main app resources (db, settings) are initialized
+                            NOTE: do not access DB before e.next() in this hook
+onSettingsReload(e)      -> fires when app settings are replaced with a new state
+onBackupCreate(e)        -> fires on $app.createBackup() -- e.name, e.exclude
+onBackupRestore(e)       -> fires before backup restore -- e.name, e.exclude
+onTerminate(e)           -> fires on SIGTERM -- e.isRestart
+
+### 9.2 Mailer Hooks
+
+onMailerSend(e)                       -> any outbound email -- e.mailer, e.message
+onMailerRecordAuthAlertSend(e)        -> new device login alert -- e.record, e.meta.info
+onMailerRecordPasswordResetSend(e)    -> password reset email -- e.record, e.meta.token
+onMailerRecordVerificationSend(e)     -> verification email -- e.record, e.meta.token
+onMailerRecordEmailChangeSend(e)      -> email change confirmation -- e.record, e.meta.token, e.meta.newEmail
+onMailerRecordOTPSend(e)              -> OTP email -- e.record, e.meta.otpId, e.meta.password
+
+### 9.3 Realtime Hooks
+
+onRealtimeConnectRequest(e)     -> SSE client connects -- e.client, e.idleTimeout
+onRealtimeSubscribeRequest(e)   -> client updates subscriptions -- e.client, e.subscriptions
+onRealtimeMessageSend(e)        -> SSE message sent to client -- e.client, e.message
+
+### 9.4 Record Model Hooks
+
+These are low-level model hooks (no request context access).
+Fire from cron jobs, CLI commands, $app.save(), etc.
+Use Request hooks (section 9.6) if you need access to HTTP request data.
+
+onRecordEnrich(e, ...collectionNames)       -> fires when a record is serialized for response
+  Use to redact/hide fields or add computed properties per-request.
+  Example:
+    onRecordEnrich((e) => {
+      e.record.hide("role")
+      e.record.withCustomData(true)
+      e.record.set("computedScore", e.record.get("score") * 2)
+      e.next()
+    }, "posts")
+
+onRecordValidate(e, ...collectionNames)     -> fires on $app.validate() or $app.save()
+
+Create lifecycle (in order):
+  onRecordCreate(e)               -> before validation + INSERT
+  onRecordCreateExecute(e)        -> after validation, before INSERT SQL
+  onRecordAfterCreateSuccess(e)   -> after transaction committed
+  onRecordAfterCreateError(e)     -> after create failure -- e.error
+
+Update lifecycle (in order):
+  onRecordUpdate(e)               -> before validation + UPDATE
+  onRecordUpdateExecute(e)        -> after validation, before UPDATE SQL
+  onRecordAfterUpdateSuccess(e)   -> after transaction committed
+  onRecordAfterUpdateError(e)     -> after update failure -- e.error
+
+Delete lifecycle (in order):
+  onRecordDelete(e)               -> before internal checks + DELETE
+  onRecordDeleteExecute(e)        -> after checks, before DELETE SQL
+  onRecordAfterDeleteSuccess(e)   -> after transaction committed
+  onRecordAfterDeleteError(e)     -> after delete failure -- e.error
+
+All hooks can be scoped to specific collections:
+  onRecordCreate((e) => { e.next() }, "users", "articles")
+
+### 9.5 Collection Model Hooks
+
+Low-level collection schema change hooks (same lifecycle pattern as records).
+
+Validate:    onCollectionValidate(e, ...names)
+Create:      onCollectionCreate, onCollectionCreateExecute, onCollectionAfterCreateSuccess, onCollectionAfterCreateError
+Update:      onCollectionUpdate, onCollectionUpdateExecute, onCollectionAfterUpdateSuccess, onCollectionAfterUpdateError
+Delete:      onCollectionDelete, onCollectionDeleteExecute, onCollectionAfterDeleteSuccess, onCollectionAfterDeleteError
+
+### 9.6 Request Hooks
+
+Triggered only when the corresponding API endpoint is called (has full request context).
+
+Record CRUD:
+  onRecordsListRequest(e, ...collections)    -> GET list -- e.collection, e.records, e.result
+  onRecordViewRequest(e, ...collections)     -> GET single -- e.collection, e.record
+  onRecordCreateRequest(e, ...collections)   -> POST create -- e.collection, e.record
+  onRecordUpdateRequest(e, ...collections)   -> PATCH update -- e.collection, e.record
+  onRecordDeleteRequest(e, ...collections)   -> DELETE -- e.collection, e.record
+
+Record Auth:
+  onRecordAuthRequest(e, ...colls)                  -> any auth success -- e.record, e.token, e.meta, e.authMethod
+  onRecordAuthRefreshRequest(e, ...colls)           -> token refresh
+  onRecordAuthWithPasswordRequest(e, ...colls)      -> password auth -- e.record (null if not found), e.identity, e.password
+  onRecordAuthWithOAuth2Request(e, ...colls)        -> OAuth2 -- e.providerName, e.record, e.oauth2User, e.isNewRecord
+  onRecordAuthWithOTPRequest(e, ...colls)           -> OTP auth -- e.record, e.otp
+  onRecordRequestOTPRequest(e, ...colls)            -> OTP request -- e.record (null if not found), e.password
+  onRecordRequestPasswordResetRequest(e, ...colls)  -> password reset request
+  onRecordConfirmPasswordResetRequest(e, ...colls)  -> password reset confirmation
+  onRecordRequestVerificationRequest(e, ...colls)   -> verification request
+  onRecordConfirmVerificationRequest(e, ...colls)   -> verification confirmation
+  onRecordRequestEmailChangeRequest(e, ...colls)    -> email change request -- e.newEmail
+  onRecordConfirmEmailChangeRequest(e, ...colls)    -> email change confirmation -- e.newEmail
+
+Batch:
+  onBatchRequest(e)   -> API batch request -- e.batch
+  (also fires individual record hooks with the batch transactional app)
+
+Files:
+  onFileDownloadRequest(e)  -> file download -- e.collection, e.record, e.fileField, e.servedPath, e.servedName
+  onFileTokenRequest(e)     -> file token generation -- e.record, e.token
+
+Collections (schema):
+  onCollectionsListRequest(e)     -> e.collections, e.result
+  onCollectionViewRequest(e)      -> e.collection
+  onCollectionCreateRequest(e)    -> e.collection
+  onCollectionUpdateRequest(e)    -> e.collection
+  onCollectionDeleteRequest(e)    -> e.collection
+  onCollectionsImportRequest(e)   -> e.collectionsData, e.deleteMissing
+
+Settings:
+  onSettingsListRequest(e)        -> e.settings
+  onSettingsUpdateRequest(e)      -> e.oldSettings, e.newSettings
+
+---
+
+## 10. Web APIs Reference
+
+Base URL:  http(s)://yourdomain.com/api
+
+Records CRUD:
+  GET    /api/collections/{collection}/records
+         Query params: page, perPage, sort, filter, expand, fields, skipTotal
+  GET    /api/collections/{collection}/records/{id}
+         Query params: expand, fields
+  POST   /api/collections/{collection}/records
+         Body: JSON or multipart/form-data (for file uploads)
+  PATCH  /api/collections/{collection}/records/{id}
+  DELETE /api/collections/{collection}/records/{id}
+
+Auth (per auth collection):
+  POST /api/collections/{collection}/auth-with-password
+  POST /api/collections/{collection}/auth-with-oauth2
+  POST /api/collections/{collection}/auth-with-otp
+  POST /api/collections/{collection}/auth-refresh
+  POST /api/collections/{collection}/request-otp
+  POST /api/collections/{collection}/request-password-reset
+  POST /api/collections/{collection}/confirm-password-reset
+  POST /api/collections/{collection}/request-verification
+  POST /api/collections/{collection}/confirm-verification
+  POST /api/collections/{collection}/request-email-change
+  POST /api/collections/{collection}/confirm-email-change
+  GET  /api/collections/{collection}/auth-methods
+  POST /api/collections/{collection}/impersonate/{id}
+
+Files:
+  GET  /api/files/{collection}/{recordId}/{filename}
+       Query: thumb=WxH, token=FILE_TOKEN, download=1
+  POST /api/collections/{collection}/records/{id}/request-file-token
+       (SDK: pb.files.getToken())
+
+Realtime (SSE):
+  GET  /api/realtime
+
+Collections (superuser only):
+  GET    /api/collections
+  GET    /api/collections/{idOrName}
+  POST   /api/collections
+  PATCH  /api/collections/{idOrName}
+  DELETE /api/collections/{idOrName}
+  PUT    /api/collections/import
+
+Settings (superuser only):
+  GET   /api/settings
+  PATCH /api/settings
+
+Backups (superuser only):
+  GET    /api/backups
+  POST   /api/backups
+  DELETE /api/backups/{key}
+  POST   /api/backups/{key}/restore
+
+Logs (superuser only):
+  GET /api/logs
+  GET /api/logs/{id}
+  GET /api/logs/stats
+
+---
+
+## 11. SDK Quick Reference
+
+JavaScript SDK
+
+Install:
+  npm install pocketbase
+
+Initialize:
+  import PocketBase from "pocketbase";
+  const pb = new PocketBase("http://127.0.0.1:8090");
+
+Records:
+  pb.collection("name").getList(page, perPage, { filter, sort, expand })
+  pb.collection("name").getFullList({ filter, sort, expand })
+  pb.collection("name").getFirstListItem(filter, { expand })
+  pb.collection("name").getOne(id, { expand })
+  pb.collection("name").create(data)
+  pb.collection("name").update(id, data)
+  pb.collection("name").delete(id)
+
+Auth:
+  pb.collection("users").authWithPassword(identity, password)
+  pb.collection("users").authWithOTP(otpId, otpCode, { mfaId })
+  pb.collection("users").authWithOAuth2({ provider })
+  pb.collection("users").authRefresh()
+  pb.collection("users").requestOTP(email)
+  pb.collection("users").requestPasswordReset(email)
+  pb.collection("users").confirmPasswordReset(token, password, passwordConfirm)
+  pb.collection("users").requestVerification(email)
+  pb.collection("users").confirmVerification(token)
+  pb.collection("users").requestEmailChange(newEmail)
+  pb.collection("users").confirmEmailChange(token, password)
+  pb.collection("users").listAuthMethods()
+  pb.collection("users").impersonate(recordId, durationSeconds)
+  pb.authStore.isValid / .token / .record
+  pb.authStore.clear()
+
+Realtime:
+  pb.collection("name").subscribe("*", callback)
+  pb.collection("name").subscribe(recordId, callback)
+  pb.collection("name").unsubscribe()
+
+Files:
+  pb.files.getURL(record, filename, { thumb, token })
+  pb.files.getToken()
+
+Dart SDK:
+  final pb = PocketBase("http://127.0.0.1:8090");
+  // API mirrors the JS SDK; use await/async patterns
+
+---
+
+## 12. Best Practices & Security Notes
+
+AUTHENTICATION & AUTHORIZATION
+  - Default API rule is "locked" (null) -- explicitly unlock only what you need.
+  - Always require @request.auth.id != "" for user-scoped resources.
+  - Never expose sensitive data via listRule without auth checks.
+  - Prefer ownership rules over role-only rules when records belong to users.
+  - Enable MFA for the _superusers collection in production.
+  - Rotate the shared auth token secret to mass-invalidate all tokens for a collection.
+
+API KEYS / SUPERUSER TOKENS
+  - _superusers impersonate tokens bypass ALL rules -- treat like root credentials.
+  - Use only for server-to-server communication; never expose client-side.
+  - These tokens are non-renewable; set short TTLs for sensitive operations.
+
+FILES
+  - Mark sensitive file fields as "Protected" to require file tokens.
+  - File tokens are valid ~2 minutes; generate them server-side or on-demand.
+  - Default 5MB per-file limit; increasing it can degrade server performance.
+  - Use S3-compatible storage for large-scale or multi-region deployments.
+
+FILTERS & RULES
+  - Test rules carefully: an empty createRule string allows ANYONE to create records.
+  - Use :isset to block specific body fields from being submitted.
+  - Use :changed to block modification of sensitive fields like "role".
+  - Use @request.body.role:isset = false to prevent privilege escalation attempts.
+
+PRODUCTION HARDENING
+  - Use SMTP (not the default sendmail) for reliable email delivery.
+  - Enable the built-in rate limiter or configure one in the reverse proxy.
+  - Set GOMEMLIMIT in constrained environments to prevent OOM kills.
+  - Use --encryptionEnv for settings encryption when backups may leave your control.
+  - Use a reverse proxy (NGINX, Caddy) for TLS termination, compression, and ACLs.
+  - Configure X-Real-IP / X-Forwarded-For headers and register them in PocketBase
+    settings for accurate IP logging and rate limiting.
+  - Increase ulimit -n (file descriptors) when handling many concurrent SSE connections.
+  - Add pb_data/ to .gitignore -- it contains your database and user files.
+  - Commit pb_migrations/ to version control for reproducible schema deployments.
+
+DATA INTEGRITY
+  - Use pb_migrations/ for all schema changes in team/CI environments.
+  - Test migrations on a copy of pb_data/ before applying in production.
+  - For large databases (2GB+), prefer sqlite3 .backup + rsync over the built-in backup.
+  - Always stop PocketBase before performing a manual pb_data/ copy/restore.
+
+HOOKS (JSVM / Go extensions)
+  - Always call e.next() unless intentionally blocking the execution chain.
+  - Use onRecordEnrich for response transformation, not onRecordsListRequest/onRecordViewRequest.
+  - Use onRecordAfterCreateSuccess (not onRecordCreate) when side effects must only
+    run after the DB transaction is fully committed.
+  - Hooks run in the same process; avoid blocking I/O in synchronous hook handlers.
+  - Validate and sanitize any data from e.requestInfo in hooks before trusting it.
+
+---
+
+## Links
+
+Documentation:   https://pocketbase.io/docs/
+JS SDK:          https://github.com/pocketbase/js-sdk
+Dart SDK:        https://github.com/pocketbase/dart-sdk
+JSVM Types:      https://pocketbase.io/jsvm/index.html
+Changelog:       https://github.com/pocketbase/pocketbase/blob/master/CHANGELOG.md
+GitHub:          https://github.com/pocketbase/pocketbase
+Discussions:     https://github.com/pocketbase/pocketbase/discussions
+FAQ:             https://pocketbase.io/faq
+Benchmarks:      https://github.com/pocketbase/benchmarks
