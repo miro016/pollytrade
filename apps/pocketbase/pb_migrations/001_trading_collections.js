@@ -15,6 +15,8 @@ migrate((app) => {
             { type: "number", name: "liquidity", min: 0 },
             { type: "select", name: "status", required: true, values: ["active", "closed", "resolved"], maxSelect: 1 },
             { type: "date", name: "end_date" },
+            { type: "autodate", name: "created", onCreate: true, onUpdate: false },
+            { type: "autodate", name: "updated", onCreate: true, onUpdate: true },
         ],
     });
     app.save(markets);
@@ -32,6 +34,8 @@ migrate((app) => {
             { type: "number", name: "value", required: true },
             { type: "number", name: "confidence", required: true, min: 0, max: 1 },
             { type: "json", name: "metadata" },
+            { type: "autodate", name: "created", onCreate: true, onUpdate: false },
+            { type: "autodate", name: "updated", onCreate: true, onUpdate: true },
         ],
     });
     app.save(signals);
@@ -54,6 +58,8 @@ migrate((app) => {
             { type: "number", name: "fees", min: 0 },
             { type: "number", name: "slippage", min: 0 },
             { type: "relation", name: "signal_id", collectionId: signals.id, cascadeDelete: false, maxSelect: 1 },
+            { type: "autodate", name: "created", onCreate: true, onUpdate: false },
+            { type: "autodate", name: "updated", onCreate: true, onUpdate: true },
         ],
     });
     app.save(trades);
@@ -71,6 +77,8 @@ migrate((app) => {
             { type: "number", name: "total_trades", min: 0 },
             { type: "select", name: "mode", required: true, values: ["paper", "live"], maxSelect: 1 },
             { type: "number", name: "peak_balance" },
+            { type: "autodate", name: "created", onCreate: true, onUpdate: false },
+            { type: "autodate", name: "updated", onCreate: true, onUpdate: true },
         ],
     });
     app.save(portfolio);
@@ -86,6 +94,8 @@ migrate((app) => {
             { type: "bool", name: "active" },
             { type: "select", name: "mode", required: true, values: ["paper", "live"], maxSelect: 1 },
             { type: "number", name: "version", min: 1 },
+            { type: "autodate", name: "created", onCreate: true, onUpdate: false },
+            { type: "autodate", name: "updated", onCreate: true, onUpdate: true },
         ],
     });
     app.save(strategyConfigs);
@@ -105,6 +115,8 @@ migrate((app) => {
             { type: "date", name: "last_trade_at" },
             { type: "text", name: "last_error", max: 2000 },
             { type: "number", name: "uptime_seconds", min: 0 },
+            { type: "autodate", name: "created", onCreate: true, onUpdate: false },
+            { type: "autodate", name: "updated", onCreate: true, onUpdate: true },
         ],
     });
     app.save(botStatus);
