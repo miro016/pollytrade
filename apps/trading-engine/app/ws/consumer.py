@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import asyncio
+from typing import Callable, Optional
 
 import structlog
 
@@ -7,7 +10,7 @@ logger = structlog.get_logger()
 
 async def market_data_consumer(
     queue: asyncio.Queue,
-    on_price_update: callable | None = None,
+    on_price_update: Optional[Callable] = None,
 ) -> None:
     """Consume market data from the WebSocket queue and dispatch to handlers.
 
@@ -38,7 +41,7 @@ async def market_data_consumer(
             logger.error("consumer_error", error=str(e))
 
 
-async def _handle_price_change(data: dict, callback: callable | None) -> None:
+async def _handle_price_change(data: dict, callback: Optional[Callable] = None) -> None:
     """Handle price change events."""
     asset_id = data.get("asset_id")
     price = data.get("price")

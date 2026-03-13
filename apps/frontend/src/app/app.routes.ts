@@ -11,11 +11,23 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/markets/markets').then(m => m.MarketsPage),
   },
   {
+    path: 'markets/:id',
+    loadComponent: () => import('./pages/markets/market-detail').then(m => m.MarketDetailPage),
+  },
+  {
     path: 'trades',
     loadComponent: () => import('./pages/trades/trades').then(m => m.TradesPage),
   },
   {
+    path: 'portfolio',
+    loadComponent: () => import('./pages/portfolio/portfolio').then(m => m.PortfolioPage),
+  },
+  {
     path: 'strategy',
     loadComponent: () => import('./pages/strategy/strategy').then(m => m.StrategyPage),
+  },
+  {
+    path: 'settings',
+    loadComponent: () => import('./pages/settings/settings').then(m => m.SettingsPage),
   },
 ];

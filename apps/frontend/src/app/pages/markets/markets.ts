@@ -1,11 +1,12 @@
 import { Component, inject, signal, computed } from '@angular/core';
 import { CurrencyPipe, DecimalPipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { MarketService, Market } from '../../services/market.service';
 import { StatusBadge } from '../../components/status-badge/status-badge';
 
 @Component({
   selector: 'app-markets',
-  imports: [CurrencyPipe, DecimalPipe, StatusBadge],
+  imports: [CurrencyPipe, DecimalPipe, RouterLink, StatusBadge],
   template: `
     <h1 class="text-2xl font-bold mb-6">Markets</h1>
 
@@ -32,7 +33,7 @@ import { StatusBadge } from '../../components/status-badge/status-badge';
         </thead>
         <tbody>
           @for (market of filteredMarkets(); track market.id) {
-            <tr class="hover">
+            <tr class="hover cursor-pointer" [routerLink]="['/markets', market.id]">
               <td class="max-w-md truncate">{{ market.question }}</td>
               <td class="font-mono">{{ market.current_prices?.yes | number:'1.2-2' }}</td>
               <td class="font-mono">{{ market.current_prices?.no | number:'1.2-2' }}</td>

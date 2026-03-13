@@ -3,14 +3,17 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from app.config import settings
+from app.services.engine import TradingEngine
 from app.services.pocketbase import PocketBaseClient
 
 logger = structlog.get_logger()
 
 pb_client = PocketBaseClient(settings.pb_url)
+engine = TradingEngine(pb_client)
 
 
 @asynccontextmanager
@@ -26,31 +29,17 @@ async def lifespan(app: FastAPI):
     healthy = await pb_client.health_check()
     if healthy:
         logger.info("pocketbase_connected")
+        # Auto-start engine
+        asyncio.create_task(engine.start())
     else:
         logger.warning("pocketbase_unavailable", url=settings.pb_url)
-
-    # Update bot status
-    await _update_bot_status(running=True)
 
     yield
 
     # Shutdown
     logger.info("trading_engine_stopping")
-    await _update_bot_status(running=False)
+    await engine.stop()
     await pb_client.close()
-
-
-async def _update_bot_status(running: bool) -> None:
-    """Update bot status in PocketBase."""
-    try:
-        records = await pb_client.list_records("bot_status", per_page=1)
-        if records:
-            await pb_client.update_record("bot_status", records[0]["id"], {
-                "running": running,
-                "last_heartbeat": datetime.now(timezone.utc).isoformat(),
-            })
-    except Exception as e:
-        logger.warning("bot_status_update_failed", error=str(e))
 
 
 app = FastAPI(
@@ -68,6 +57,7 @@ async def health():
         "status": "healthy",
         "mode": settings.trading_mode,
         "pocketbase": "connected" if pb_healthy else "disconnected",
+        "engine_running": engine.running,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -82,3 +72,36 @@ async def status():
     except Exception:
         pass
     return {"running": False, "error": "Unable to fetch status"}
+
+
+@app.post("/control/start")
+async def control_start():
+    """Start the trading engine."""
+    if engine.running:
+        return {"message": "Engine already running"}
+    asyncio.create_task(engine.start())
+    return {"message": "Engine starting"}
+
+
+@app.post("/control/stop")
+async def control_stop():
+    """Stop the trading engine."""
+    if not engine.running:
+        return {"message": "Engine already stopped"}
+    await engine.stop()
+    return {"message": "Engine stopped"}
+
+
+class ModeRequest(BaseModel):
+    mode: str
+
+
+@app.post("/control/mode")
+async def control_mode(req: ModeRequest):
+    """Switch trading mode (paper/live)."""
+    if req.mode not in ("paper", "live"):
+        raise HTTPException(status_code=400, detail="Mode must be 'paper' or 'live'")
+    if req.mode == "live":
+        raise HTTPException(status_code=403, detail="Live trading not yet enabled")
+    settings.trading_mode = req.mode
+    return {"message": f"Mode set to {req.mode}"}
